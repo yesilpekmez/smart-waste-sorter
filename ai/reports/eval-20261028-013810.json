@@ -1,0 +1,60 @@
+{
+  "weights": "/Users/sevketyesilpekmez/Desktop/smart-waste-sorter/ai/weights/best.pt",
+  "data": "/Users/sevketyesilpekmez/Desktop/smart-waste-sorter/ai/datasets/trashnet/test",
+  "total": 362,
+  "accuracy": 0.925414364640884,
+  "macro_f1": 0.913429485030397,
+  "low_confidence": 4,
+  "per_class": {
+    "glass": {
+      "precision": 0.8860759493670886,
+      "recall": 0.9210526315789473,
+      "f1": 0.9032258064516129,
+      "support": 76
+    },
+    "metal": {
+      "precision": 0.8676470588235294,
+      "recall": 0.9516129032258065,
+      "f1": 0.9076923076923077,
+      "support": 62
+    },
+    "paper": {
+      "precision": 0.9668874172185431,
+      "recall": 0.9668874172185431,
+      "f1": 0.9668874172185431,
+      "support": 151
+    },
+    "plastic": {
+      "precision": 0.9375,
+      "recall": 0.821917808219178,
+      "f1": 0.8759124087591241,
+      "support": 73
+    }
+  },
+  "confusion_matrix": {
+    "glass": {
+      "glass": 70,
+      "metal": 5,
+      "paper": 0,
+      "plastic": 1
+    },
+    "metal": {
+      "glass": 0,
+      "metal": 59,
+      "paper": 1,
+      "plastic": 2
+    },
+    "paper": {
+      "glass": 2,
+      "metal": 2,
+      "paper": 146,
+      "plastic": 1
+    },
+    "plastic": {
+      "glass": 7,
+      "metal": 2,
+      "paper": 4,
+      "plastic": 60
+    }
+  }
+}

@@ -5,6 +5,7 @@ sınıflandırıcıyı kullanır. İkisi de aynı biçimde sonuç döndürür.
 """
 from __future__ import annotations
 
+import logging
 import random
 from dataclasses import dataclass
 from pathlib import Path
@@ -14,12 +15,15 @@ from PIL import Image
 
 from .models import WASTE_CLASSES
 
+log = logging.getLogger(__name__)
+
 
 @dataclass
 class Prediction:
     label: str
     confidence: float
-    box: tuple  # (x, y, w, h), karenin yüzdesi olarak
+    # (x, y, w, h), karenin yüzdesi olarak; sınıflandırma modelinde None
+    box: Optional[tuple] = None
 
 
 class MockClassifier:
@@ -37,6 +41,8 @@ class MockClassifier:
 
 
 class YoloClassifier:
+    """YOLOv8 sınıflandırma (-cls) ve algılama modellerinin ikisini de destekler."""
+
     name = "yolo"
 
     def __init__(self, model_path: str):
@@ -48,6 +54,13 @@ class YoloClassifier:
         if image is None:
             return None
         result = self.model.predict(image, verbose=False)[0]
+
+        if result.probs is not None:  # sınıflandırma modeli
+            label = result.names[result.probs.top1]
+            if label not in WASTE_CLASSES:
+                return None
+            return Prediction(label, float(result.probs.top1conf))
+
         if len(result.boxes) == 0:
             return None
         best = max(result.boxes, key=lambda b: float(b.conf))
@@ -61,9 +74,11 @@ class YoloClassifier:
 
 
 def load_classifier(model_path: str):
-    if Path(model_path).is_file():
-        try:
-            return YoloClassifier(model_path)
-        except ImportError:
-            pass
-    return MockClassifier()
+    if not Path(model_path).is_file():
+        log.warning("Model dosyası yok (%s), örnek sınıflandırıcı kullanılıyor", model_path)
+        return MockClassifier()
+    try:
+        return YoloClassifier(model_path)
+    except ImportError:
+        log.warning("ultralytics kurulu değil, örnek sınıflandırıcı kullanılıyor")
+        return MockClassifier()
