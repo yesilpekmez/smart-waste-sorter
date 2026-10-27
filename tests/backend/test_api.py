@@ -77,6 +77,52 @@ def test_operations_newest_first(client):
     for _ in range(3):
         d = client.post("/api/detect").get_json()
         client.post("/api/sort", json={"detectionId": d["id"]})
-    ops = client.get("/api/operations?limit=2").get_json()
-    assert len(ops) == 2
-    assert ops[0]["id"] > ops[1]["id"]
+    body = client.get("/api/operations?limit=2").get_json()
+    assert body["total"] == 3
+    assert len(body["items"]) == 2
+    assert body["items"][0]["id"] > body["items"][1]["id"]
+
+
+def test_classification_result_has_no_box(client, classifier):
+    classifier.next = Prediction("paper", 0.9)
+    body = client.post("/api/detect").get_json()
+    assert body["box"] is None
+    assert body["label"] == "paper"
+
+
+def test_jam_records_failed_operation_and_blocks_until_reset(client, world):
+    world.faults.add("jam")
+    d = client.post("/api/detect").get_json()
+    op = client.post("/api/sort", json={"detectionId": d["id"]}).get_json()["operation"]
+    assert (op["status"], op["reason"]) == ("failed", "jam")
+    assert client.get("/api/system").get_json()["state"] == "fault"
+
+    d2 = client.post("/api/detect").get_json()
+    res = client.post("/api/sort", json={"detectionId": d2["id"]})
+    assert res.status_code == 409
+    assert res.get_json()["code"] == "faulted"
+
+    world.faults.clear()
+    assert client.post("/api/system/reset").get_json()["state"] == "idle"
+    assert client.post("/api/sort", json={"detectionId": d2["id"]}).status_code == 201
+
+
+def test_empty_bin_resets_sensor_reading(client):
+    assert client.post("/api/bins/metal/empty").get_json()["fill"] == 0
+    assert fill_of(client, "metal") == 0
+
+
+def test_operations_filter_and_stats(client, classifier):
+    for pred in [Prediction("glass", 0.9), Prediction("glass", 0.4), Prediction("paper", 0.95)]:
+        classifier.next = pred
+        d = client.post("/api/detect").get_json()
+        client.post("/api/sort", json={"detectionId": d["id"]})
+
+    glass = client.get("/api/operations?label=glass").get_json()
+    assert glass["total"] == 2
+    rejected = client.get("/api/operations?status=rejected").get_json()
+    assert [o["label"] for o in rejected["items"]] == ["glass"]
+
+    stats = client.get("/api/stats").get_json()
+    assert (stats["total"], stats["completed"], stats["rejected"]) == (3, 2, 1)
+    assert stats["byClass"]["glass"] == {"completed": 1, "rejected": 1, "failed": 0}

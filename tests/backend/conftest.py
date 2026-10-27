@@ -28,6 +28,8 @@ def app(tmp_path):
             "TESTING": True,
             "SQLALCHEMY_DATABASE_URI": f"sqlite:///{tmp_path / 'test.db'}",
             "UPLOAD_DIR": tmp_path / "uploads",
+            "SIM_TIME_SCALE": 0,
+            "MODEL_PATH": str(tmp_path / "yok.pt"),  # testler eğitilmiş modele bağlı olmasın
         }
     )
     app.extensions["classifier"] = FixedClassifier()
@@ -42,3 +44,8 @@ def client(app):
 @pytest.fixture
 def classifier(app):
     return app.extensions["classifier"]
+
+
+@pytest.fixture
+def world(app):
+    return app.extensions["controller"].hw.world

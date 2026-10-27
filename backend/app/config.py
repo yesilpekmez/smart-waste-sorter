@@ -16,3 +16,8 @@ class Config:
     MIN_CONFIDENCE = 0.6
     # Bu oranın üzerindeki bölmelere atık gönderilmez
     FULL_THRESHOLD = 90
+
+    # "simulated" ya da (ileride) "raspberry"
+    HARDWARE = os.environ.get("HARDWARE", "simulated")
+    # Simülasyondaki motor ve servo sürelerinin çarpanı; testlerde 0
+    SIM_TIME_SCALE = float(os.environ.get("SIM_TIME_SCALE", "1"))
