@@ -1,9 +1,10 @@
-import type { Bin, Detection, Operation } from './types';
+import type { Bin, Detection, Operation, Stats, SystemStatus } from './types';
 
 export class ApiError extends Error {
   constructor(
     message: string,
     readonly status: number,
+    readonly code?: string,
   ) {
     super(message);
   }
@@ -12,7 +13,7 @@ export class ApiError extends Error {
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`/api${path}`, init);
   const body = await res.json().catch(() => ({}));
-  if (!res.ok) throw new ApiError(body.error ?? 'Beklenmeyen bir hata oluştu', res.status);
+  if (!res.ok) throw new ApiError(body.error ?? 'Beklenmeyen bir hata oluştu', res.status, body.code);
   return body as T;
 }
 
@@ -24,11 +25,21 @@ const post = <T>(path: string, json?: unknown) =>
   });
 
 export const api = {
-  health: () => request<{ status: string; classifier: string }>('/health'),
+  health: () => request<{ status: string; classifier: string; hardware: string }>('/health'),
+  system: () => request<SystemStatus>('/system'),
+  resetSystem: () => post<SystemStatus>('/system/reset'),
   bins: () => request<Bin[]>('/bins'),
   emptyBin: (type: string) => post<Bin>(`/bins/${type}/empty`),
   latestDetection: () => request<Detection>('/detections/latest'),
-  operations: (limit = 1) => request<Operation[]>(`/operations?limit=${limit}`),
+  operations: (params: { limit?: number; offset?: number; label?: string; status?: string } = {}) => {
+    const query = new URLSearchParams(
+      Object.entries(params)
+        .filter(([, v]) => v !== undefined && v !== '')
+        .map(([k, v]) => [k, String(v)]),
+    );
+    return request<{ total: number; items: Operation[] }>(`/operations?${query}`);
+  },
+  stats: () => request<Stats>('/stats'),
   sort: (detectionId: number) => post<{ operation: Operation; bin: Bin }>('/sort', { detectionId }),
 
   // Görüntü verilmezse sunucu kameradan kare alınmış gibi davranır

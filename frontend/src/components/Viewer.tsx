@@ -69,17 +69,22 @@ function DetectionFrame({ detection }: { detection: Detection | null }) {
 
   const { label, confidence, box, imageUrl } = detection;
   const { name, Icon } = CLASSES[label];
-  const boxEl = (
+  const text = `${name} · ${percent(confidence)}`;
+
+  const boxEl = box ? (
     <div
       className="bbox"
       key={detection.id}
       style={{ left: `${box.x}%`, top: `${box.y}%`, width: `${box.w}%`, height: `${box.h}%` }}
     >
-      <span className="bbox__label">
-        {name} · {percent(confidence)}
-      </span>
+      <span className="bbox__label">{text}</span>
       {!imageUrl && <Icon className="bbox__icon" size={24} strokeWidth={1.25} />}
     </div>
+  ) : (
+    // Sınıflandırma modeli konum vermez; etiket görüntünün köşesinde durur
+    <span className="bbox__label bbox__label--corner" key={detection.id}>
+      {text}
+    </span>
   );
 
   if (imageUrl) {

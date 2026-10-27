@@ -9,6 +9,7 @@ const STATUS_TEXT: Record<SortStatus, string> = {
   done: 'Ayrıldı',
   bin_full: 'Bölme dolu',
   uncertain: 'Tahmin belirsiz',
+  fault: 'Arıza · Sistem durdu',
 };
 
 interface Props {
@@ -21,6 +22,7 @@ export function ResultCard({ detection, status, onSort }: Props) {
   const name = detection ? CLASSES[detection.label].name : '—';
   const confidence = detection?.confidence ?? 0;
   const blocked = status === 'bin_full' || status === 'uncertain';
+  const disabled = !detection || status === 'sorting' || status === 'done' || status === 'fault';
 
   return (
     <section className="card result">
@@ -43,11 +45,11 @@ export function ResultCard({ detection, status, onSort }: Props) {
         </div>
         <div className="row">
           <dt>İşlem durumu</dt>
-          <dd className={blocked ? 'text-warn' : undefined}>{STATUS_TEXT[status]}</dd>
+          <dd className={blocked || status === 'fault' ? 'text-warn' : undefined}>{STATUS_TEXT[status]}</dd>
         </div>
       </dl>
 
-      <button className="btn-primary" onClick={onSort} disabled={!detection || status === 'sorting' || status === 'done'}>
+      <button className="btn-primary" onClick={onSort} disabled={disabled}>
         {blocked ? 'Reddet ve sonrakine geç' : 'Ayırmayı başlat'} <ArrowRight size={18} />
       </button>
     </section>

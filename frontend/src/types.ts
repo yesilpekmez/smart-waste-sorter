@@ -6,8 +6,8 @@ export interface Detection {
   id: number;
   label: WasteClass;
   confidence: number; // 0–1
-  // Kare içindeki konum, yüzde olarak
-  box: { x: number; y: number; w: number; h: number };
+  // Kare içindeki konum, yüzde olarak; sınıflandırma modelinde null
+  box: { x: number; y: number; w: number; h: number } | null;
   imageUrl: string | null;
   blockedReason: BlockReason | null;
   createdAt: string;
@@ -25,9 +25,27 @@ export interface Operation {
   label: WasteClass;
   confidence: number;
   targetBin: WasteClass;
-  status: 'completed' | 'rejected';
-  reason: BlockReason | null;
+  imageUrl: string | null;
+  status: 'completed' | 'rejected' | 'failed';
+  // rejected: BlockReason — failed: kontrol servisinin hata kodu
+  reason: string | null;
   createdAt: string;
 }
 
-export type SortStatus = 'idle' | 'ready' | 'sorting' | 'done' | BlockReason;
+export type SortStatus = 'idle' | 'ready' | 'sorting' | 'done' | 'fault' | BlockReason;
+
+export interface SystemStatus {
+  state: 'idle' | 'routing' | 'dropping' | 'verifying' | 'returning' | 'fault';
+  fault: { code: string; message: string } | null;
+  itemPresent: boolean;
+}
+
+export interface Stats {
+  total: number;
+  completed: number;
+  rejected: number;
+  failed: number;
+  successRate: number | null;
+  averageConfidence: number | null;
+  byClass: Record<WasteClass, { completed: number; rejected: number; failed: number }>;
+}

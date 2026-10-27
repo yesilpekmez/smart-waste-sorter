@@ -1,7 +1,15 @@
-import { CLASSES, percent } from '../constants';
+import { CLASSES, FAULT_TEXT, percent } from '../constants';
 import type { Operation } from '../types';
 
-const REJECT_TEXT = { uncertain: 'Durduruldu · Belirsiz tahmin', bin_full: 'Durduruldu · Bölme dolu' };
+const REJECT_TEXT: Record<string, string> = {
+  uncertain: 'Durduruldu · Belirsiz tahmin',
+  bin_full: 'Durduruldu · Bölme dolu',
+};
+
+function badgeText(op: Operation): string {
+  if (op.status === 'rejected') return REJECT_TEXT[op.reason ?? ''] ?? 'Durduruldu';
+  return `Arıza · ${FAULT_TEXT[op.reason ?? ''] ?? op.reason}`;
+}
 
 export function LastOperation({ operation }: { operation: Operation | null }) {
   return (
@@ -27,7 +35,7 @@ export function LastOperation({ operation }: { operation: Operation | null }) {
             {operation.status === 'completed' ? (
               <span className="badge">Ayırma tamamlandı</span>
             ) : (
-              <span className="badge badge--warn">{operation.reason ? REJECT_TEXT[operation.reason] : 'Durduruldu'}</span>
+              <span className="badge badge--warn">{badgeText(operation)}</span>
             )}
           </>
         ) : (
