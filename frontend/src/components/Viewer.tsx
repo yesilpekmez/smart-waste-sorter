@@ -1,12 +1,28 @@
 import { useEffect, useRef, useState } from 'react';
-import { VideoOff } from 'lucide-react';
+import { ImageUp, ScanSearch, VideoOff } from 'lucide-react';
 import { CLASSES, percent } from '../constants';
 import type { Detection } from '../types';
 
 type Tab = 'live' | 'detection';
 
-export function Viewer({ detection }: { detection: Detection }) {
+interface Props {
+  detection: Detection | null;
+  onUpload: (file: File) => Promise<void>;
+}
+
+export function Viewer({ detection, onUpload }: Props) {
   const [tab, setTab] = useState<Tab>('detection');
+  const [uploading, setUploading] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const handleFile = async (file: File | undefined) => {
+    if (!file) return;
+    setUploading(true);
+    setTab('detection');
+    await onUpload(file);
+    setUploading(false);
+    if (inputRef.current) inputRef.current.value = '';
+  };
 
   return (
     <section className="card viewer">
@@ -22,6 +38,16 @@ export function Viewer({ detection }: { detection: Detection }) {
         <button role="tab" aria-selected={tab === 'detection'} className="tab" onClick={() => setTab('detection')}>
           Son algılama
         </button>
+        <button className="tab tab--action" onClick={() => inputRef.current?.click()} disabled={uploading}>
+          <ImageUp size={18} strokeWidth={1.75} /> {uploading ? 'Analiz ediliyor…' : 'Fotoğraf yükle'}
+        </button>
+        <input
+          ref={inputRef}
+          type="file"
+          accept="image/*"
+          hidden
+          onChange={(e) => handleFile(e.target.files?.[0])}
+        />
       </div>
 
       <div className="frame">
@@ -31,23 +57,47 @@ export function Viewer({ detection }: { detection: Detection }) {
   );
 }
 
-function DetectionFrame({ detection }: { detection: Detection }) {
-  const { label, confidence, box } = detection;
+function DetectionFrame({ detection }: { detection: Detection | null }) {
+  if (!detection) {
+    return (
+      <div className="frame__empty">
+        <ScanSearch size={28} strokeWidth={1.5} />
+        <span>Henüz algılama yok · Bir fotoğraf yükleyerek başla</span>
+      </div>
+    );
+  }
+
+  const { label, confidence, box, imageUrl } = detection;
   const { name, Icon } = CLASSES[label];
+  const boxEl = (
+    <div
+      className="bbox"
+      key={detection.id}
+      style={{ left: `${box.x}%`, top: `${box.y}%`, width: `${box.w}%`, height: `${box.h}%` }}
+    >
+      <span className="bbox__label">
+        {name} · {percent(confidence)}
+      </span>
+      {!imageUrl && <Icon className="bbox__icon" size={24} strokeWidth={1.25} />}
+    </div>
+  );
+
+  if (imageUrl) {
+    // Kutu yüzdeleri görüntüye göre olduğu için kutuyu görüntüyle aynı kaba koyuyoruz
+    return (
+      <div className="frame__photo">
+        <div className="photo">
+          <img src={imageUrl} alt={`Algılanan atık: ${name}`} />
+          {boxEl}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <>
-      <div
-        className="bbox"
-        key={`${label}-${confidence}`}
-        style={{ left: `${box.x}%`, top: `${box.y}%`, width: `${box.w}%`, height: `${box.h}%` }}
-      >
-        <span className="bbox__label">
-          {name} · {percent(confidence)}
-        </span>
-        <Icon className="bbox__icon" size={24} strokeWidth={1.25} />
-      </div>
-      <span className="frame__caption">Örnek karar karesi · Şematik nesne temsili</span>
+      {boxEl}
+      <span className="frame__caption">Kamera karesi · Şematik nesne temsili</span>
     </>
   );
 }

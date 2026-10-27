@@ -3,6 +3,7 @@ import { CLASSES, MIN_CONFIDENCE, percent } from '../constants';
 import type { Detection, SortStatus } from '../types';
 
 const STATUS_TEXT: Record<SortStatus, string> = {
+  idle: 'Atık bekleniyor',
   ready: 'Ayırmaya hazır',
   sorting: 'Ayrılıyor…',
   done: 'Ayrıldı',
@@ -11,13 +12,14 @@ const STATUS_TEXT: Record<SortStatus, string> = {
 };
 
 interface Props {
-  detection: Detection;
+  detection: Detection | null;
   status: SortStatus;
   onSort: () => void;
 }
 
 export function ResultCard({ detection, status, onSort }: Props) {
-  const name = CLASSES[detection.label].name;
+  const name = detection ? CLASSES[detection.label].name : '—';
+  const confidence = detection?.confidence ?? 0;
   const blocked = status === 'bin_full' || status === 'uncertain';
 
   return (
@@ -26,11 +28,11 @@ export function ResultCard({ detection, status, onSort }: Props) {
       <h2 className="card__title">Sınıflandırma sonucu</h2>
 
       <div className="result__class">{name}</div>
-      <div className="muted">{percent(detection.confidence)} model güven skoru</div>
+      <div className="muted">{detection ? `${percent(confidence)} model güven skoru` : 'Tahmin yok'}</div>
       <div className="bar bar--thick">
         <div
-          className={`bar__fill ${detection.confidence < MIN_CONFIDENCE ? 'bar__fill--warn' : ''}`}
-          style={{ width: `${detection.confidence * 100}%` }}
+          className={`bar__fill ${confidence < MIN_CONFIDENCE ? 'bar__fill--warn' : ''}`}
+          style={{ width: `${confidence * 100}%` }}
         />
       </div>
 
@@ -45,8 +47,8 @@ export function ResultCard({ detection, status, onSort }: Props) {
         </div>
       </dl>
 
-      <button className="btn-primary" onClick={onSort} disabled={status === 'sorting'}>
-        {blocked ? 'Sonraki atığa geç' : 'Ayırmayı simüle et'} <ArrowRight size={18} />
+      <button className="btn-primary" onClick={onSort} disabled={!detection || status === 'sorting' || status === 'done'}>
+        {blocked ? 'Reddet ve sonrakine geç' : 'Ayırmayı başlat'} <ArrowRight size={18} />
       </button>
     </section>
   );

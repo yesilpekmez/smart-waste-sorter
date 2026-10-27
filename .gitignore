@@ -18,3 +18,8 @@ runs/
 # Sistem
 .DS_Store
 *.db
+
+# Backend çalışma dosyaları
+backend/instance/
+backend/uploads/
+*.tsbuildinfo

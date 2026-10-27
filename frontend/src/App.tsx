@@ -1,67 +1,87 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Header } from './components/Header';
 import { Viewer } from './components/Viewer';
 import { ResultCard } from './components/ResultCard';
 import { BinCard } from './components/BinCard';
 import { LastOperation } from './components/LastOperation';
-import { CLASS_ORDER, FULL_THRESHOLD, MIN_CONFIDENCE } from './constants';
-import { initialDetection, initialFill, initialOperation, randomDetection } from './mock';
-import type { Detection, Operation, SortStatus, WasteClass } from './types';
+import { ApiError, api } from './api';
+import { CLASS_ORDER } from './constants';
+import type { Bin, Detection, Operation, SortStatus, WasteClass } from './types';
 
-function statusFor(detection: Detection, fill: Record<WasteClass, number>): SortStatus {
-  if (detection.confidence < MIN_CONFIDENCE) return 'uncertain';
-  if (fill[detection.label] >= FULL_THRESHOLD) return 'bin_full';
-  return 'ready';
-}
+type Connection = { state: 'connecting' } | { state: 'online'; classifier: string } | { state: 'offline' };
+
+const statusFor = (d: Detection | null): SortStatus => (d ? (d.blockedReason ?? 'ready') : 'idle');
+const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 export default function App() {
-  const [fill, setFill] = useState(initialFill);
-  const [detection, setDetection] = useState(initialDetection);
-  const [status, setStatus] = useState<SortStatus>(() => statusFor(initialDetection, initialFill));
-  const [lastOp, setLastOp] = useState<Operation>(initialOperation);
-  const timers = useRef<number[]>([]);
+  const [connection, setConnection] = useState<Connection>({ state: 'connecting' });
+  const [bins, setBins] = useState<Record<WasteClass, number> | null>(null);
+  const [detection, setDetection] = useState<Detection | null>(null);
+  const [status, setStatus] = useState<SortStatus>('idle');
+  const [lastOp, setLastOp] = useState<Operation | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const mounted = useRef(true);
 
-  useEffect(() => () => timers.current.forEach(clearTimeout), []);
+  useEffect(() => () => void (mounted.current = false), []);
 
-  const later = (fn: () => void, ms: number) => timers.current.push(window.setTimeout(fn, ms));
-
-  const nextDetection = (currentFill: Record<WasteClass, number>) => {
-    const d = randomDetection();
+  const showDetection = (d: Detection | null) => {
     setDetection(d);
-    setStatus(statusFor(d, currentFill));
+    setStatus(statusFor(d));
   };
 
-  const record = (opStatus: Operation['status']) =>
-    setLastOp((prev) => ({
-      id: prev.id + 1,
-      label: detection.label,
-      confidence: detection.confidence,
-      status: opStatus,
-      time: new Date(),
-    }));
+  const updateBin = (bin: Bin) => setBins((prev) => prev && { ...prev, [bin.type]: bin.fill });
 
-  // Gerçek sistemde bu adımları kontrol servisi yürütecek: platform döner, servo atığı bırakır
-  const handleSort = () => {
-    if (status === 'uncertain' || status === 'bin_full') {
-      record('rejected');
-      nextDetection(fill);
-      return;
+  const run = useCallback(async (fn: () => Promise<void>) => {
+    setError(null);
+    try {
+      await fn();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : 'Sunucuya bağlanılamadı');
     }
-    setStatus('sorting');
-    later(() => {
-      const updated = { ...fill, [detection.label]: Math.min(100, fill[detection.label] + 3 + Math.round(Math.random() * 4)) };
-      setFill(updated);
-      setStatus('done');
-      record('completed');
-      later(() => nextDetection(updated), 1400);
-    }, 1200);
-  };
+  }, []);
 
-  const handleEmpty = (type: WasteClass) => {
-    const updated = { ...fill, [type]: 0 };
-    setFill(updated);
-    if (status === 'bin_full' && detection.label === type) setStatus(statusFor(detection, updated));
-  };
+  useEffect(() => {
+    (async () => {
+      try {
+        const [health, binList, ops] = await Promise.all([api.health(), api.bins(), api.operations(1)]);
+        setConnection({ state: 'online', classifier: health.classifier });
+        setBins(Object.fromEntries(binList.map((b) => [b.type, b.fill])) as Record<WasteClass, number>);
+        setLastOp(ops[0] ?? null);
+        showDetection(await api.latestDetection().catch(() => null));
+      } catch {
+        setConnection({ state: 'offline' });
+      }
+    })();
+  }, []);
+
+  const handleUpload = (file: File) => run(async () => showDetection(await api.detect(file)));
+
+  // Platformu döndürme ve atığı bırakma adımlarını sunucudaki kontrol servisi yürütür
+  const handleSort = () =>
+    run(async () => {
+      if (!detection) return;
+      const blocked = detection.blockedReason !== null;
+      if (!blocked) setStatus('sorting');
+      try {
+        const [{ operation, bin }] = await Promise.all([api.sort(detection.id), wait(blocked ? 0 : 1200)]);
+        updateBin(bin);
+        setLastOp(operation);
+        if (!blocked) setStatus('done');
+      } catch (e) {
+        setStatus(statusFor(detection));
+        throw e;
+      }
+      await wait(blocked ? 0 : 1400);
+      if (!mounted.current) return;
+      // Sıradaki atık: kameradan yeni kare
+      showDetection(await api.detect().catch(() => null));
+    });
+
+  const handleEmpty = (type: WasteClass) =>
+    run(async () => {
+      updateBin(await api.emptyBin(type));
+      if (detection?.label === type) showDetection(await api.latestDetection());
+    });
 
   return (
     <>
@@ -73,11 +93,19 @@ export default function App() {
             <h1 className="hero__title">Dönüşüm burada başlar.</h1>
             <p className="muted hero__lead">Atığı tanı, doğru bölmeye yönlendir, süreci takip et.</p>
           </div>
-          <span className="pill">Demo · Örnek veriler</span>
+          <ConnectionPill connection={connection} />
         </section>
 
+        {connection.state === 'offline' && (
+          <div className="alert">
+            Sunucuya bağlanılamadı. Backend'i <code>cd backend &amp;&amp; .venv/bin/python run.py</code> ile başlatıp
+            sayfayı yenile.
+          </div>
+        )}
+        {error && <div className="alert">{error}</div>}
+
         <div className="grid-main">
-          <Viewer detection={detection} />
+          <Viewer detection={detection} onUpload={handleUpload} />
           <ResultCard detection={detection} status={status} onSort={handleSort} />
         </div>
 
@@ -90,8 +118,8 @@ export default function App() {
             <BinCard
               key={type}
               type={type}
-              fill={fill[type]}
-              active={status === 'sorting' && detection.label === type}
+              fill={bins?.[type] ?? 0}
+              active={status === 'sorting' && detection?.label === type}
               onEmpty={() => handleEmpty(type)}
             />
           ))}
@@ -100,5 +128,16 @@ export default function App() {
         <LastOperation operation={lastOp} />
       </main>
     </>
+  );
+}
+
+function ConnectionPill({ connection }: { connection: Connection }) {
+  if (connection.state === 'connecting') return <span className="pill">Bağlanıyor…</span>;
+  if (connection.state === 'offline') return <span className="pill pill--warn">Sunucu çevrimdışı</span>;
+  const model = connection.classifier === 'yolo' ? 'YOLOv8 modeli' : 'Örnek sınıflandırıcı';
+  return (
+    <span className="pill">
+      <span className="dot" /> Bağlı · {model}
+    </span>
   );
 }
