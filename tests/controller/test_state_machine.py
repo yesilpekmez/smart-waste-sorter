@@ -98,3 +98,71 @@ def test_fill_percent_conversion():
 def test_set_fill_round_trips(hw, ctrl):
     hw.set_fill("metal", 82)
     assert ctrl.fill_levels()["metal"] == 82
+
+
+def fast_controller(hw):
+    from controller import Timeouts
+
+    return SortController(hw, timeouts=Timeouts(move=0.2, home=0.2, gate=0.2, drop=0.2, stop=0.2))
+
+
+def test_unexpected_driver_error_becomes_fault(hw):
+    ctrl = fast_controller(hw)
+    stopped = []
+    original_stop = hw.platform.stop
+    hw.platform.stop = lambda: (stopped.append(True), original_stop())
+    hw.place_item()
+    hw.world.faults.add("gate_error")
+
+    result = ctrl.sort("glass")
+    assert (result.ok, result.fault, result.error_code) == (False, True, "driver_error")
+    assert "OSError" in result.error
+    assert ctrl.state == State.FAULT
+    assert stopped, "motor durdurulmalı"
+
+
+def test_failing_safe_stop_still_ends_in_fault(hw):
+    ctrl = fast_controller(hw)
+    hw.place_item()
+    hw.world.faults.update({"gate_error", "stop_error"})
+
+    result = ctrl.sort("glass")
+    assert ctrl.state == State.FAULT
+    assert "motor durdurulamadı" in result.error
+
+
+def test_stalled_motor_times_out(hw):
+    ctrl = fast_controller(hw)
+    hw.place_item()
+    hw.world.faults.add("stall")
+
+    result = ctrl.sort("metal")
+    assert result.error_code == "timeout"
+    assert ctrl.state == State.FAULT
+    assert hw.world.item_on_platform
+
+
+def test_failed_reset_keeps_fault(hw):
+    ctrl = fast_controller(hw)
+    hw.place_item()
+    hw.world.faults.add("jam")
+    ctrl.sort("paper")
+
+    hw.world.faults = {"home"}
+    with pytest.raises(ControllerFault) as err:
+        ctrl.reset()
+    assert err.value.code == "home_error"
+    assert ctrl.state == State.FAULT
+
+
+def test_no_item_result_is_not_a_fault(hw, ctrl):
+    result = ctrl.sort("paper")
+    assert result.fault is False
+    assert ctrl.fault is None
+
+
+def test_initialize_starts_in_fault_when_homing_fails(hw):
+    hw.world.faults.add("home")
+    ctrl = fast_controller(hw)
+    ctrl.initialize()
+    assert ctrl.state == State.FAULT

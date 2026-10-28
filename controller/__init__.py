@@ -5,6 +5,6 @@ Durum makinesi (SortController) donanıma yalnızca hardware.py'deki arayüzler
 sürücüleri aynı arayüzleri uygulayacak.
 """
 from .hardware import BIN_ANGLES, Hardware
-from .state_machine import ControllerFault, SortController, SortResult, State
+from .state_machine import ControllerFault, SortController, SortResult, State, Timeouts
 
-__all__ = ["BIN_ANGLES", "ControllerFault", "Hardware", "SortController", "SortResult", "State"]
+__all__ = ["BIN_ANGLES", "ControllerFault", "Hardware", "SortController", "SortResult", "State", "Timeouts"]

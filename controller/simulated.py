@@ -2,11 +2,19 @@
 
 Tüm sürücüler ortak bir SimulatedWorld nesnesini paylaşır: platformun açısı,
 üzerinde atık olup olmadığı ve bölmelerin doluluk yüksekliği burada tutulur.
-`faults` kümesine "jam", "position" veya "home" eklenerek arıza denenebilir.
+`faults` kümesine eklenerek arıza denenebilir:
+
+    jam         atık platformdan düşmez
+    position    motor adım kaçırır, platform hedef açıdan sapar
+    home        platform referans sensörünü bulamaz
+    stall       motor takılır; durdurma komutu gelene kadar hareket bitmez
+    gate_error  servo sürücüsü OSError verir
+    stop_error  motoru durdurma komutu da OSError verir
 """
 from __future__ import annotations
 
 import random
+import threading
 import time
 from dataclasses import dataclass, field
 from typing import Optional
@@ -39,8 +47,13 @@ class SimulatedWorld:
 class SimulatedPlatform:
     def __init__(self, world: SimulatedWorld):
         self.world = world
+        self._stopped = threading.Event()
 
     def rotate_to(self, angle: float) -> None:
+        self._stopped.clear()
+        if "stall" in self.world.faults:
+            self._stopped.wait(30)  # durdurma komutuna kadar takılı kalır
+            return
         delta = abs(angle - self.world.angle)
         self.world.wait(min(delta, 360 - delta) / DEGREES_PER_SECOND)
         # Konum hatası: motor adım kaçırır
@@ -58,7 +71,9 @@ class SimulatedPlatform:
         return abs(self.world.angle) < 1
 
     def stop(self) -> None:
-        pass
+        if "stop_error" in self.world.faults:
+            raise OSError("Motor sürücüsüne yazılamadı")
+        self._stopped.set()
 
 
 class SimulatedGate:
@@ -66,6 +81,8 @@ class SimulatedGate:
         self.world = world
 
     def open(self) -> None:
+        if "gate_error" in self.world.faults:
+            raise OSError("Servo PWM kanalı açılamadı")
         self.world.wait(SERVO_SECONDS)
         target = self.world.bin_under_platform()
         if self.world.item_on_platform and "jam" not in self.world.faults and target:
