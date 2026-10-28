@@ -24,7 +24,9 @@ def create_controller(app: Flask) -> SortController:
     hw = SimulatedHardware(SimulatedWorld(time_scale=app.config["SIM_TIME_SCALE"]))
     for bin_type, percent in DEMO_FILL.items():
         hw.set_fill(bin_type, percent)
-    return SortController(hw)
+    ctrl = SortController(hw)
+    ctrl.initialize()  # açılışta referans konumu aranır
+    return ctrl
 
 
 def controller() -> SortController:

@@ -9,6 +9,7 @@ from .config import Config
 from .control import create_controller, sync_bins
 from .models import db
 from .routes import api
+from .sorting import recover_interrupted
 
 
 def create_app(overrides: dict | None = None) -> Flask:
@@ -25,6 +26,7 @@ def create_app(overrides: dict | None = None) -> Flask:
 
     with app.app_context():
         db.create_all()
+        recover_interrupted()
         sync_bins()
 
     return app

@@ -13,6 +13,8 @@ class FixedClassifier:
     """Testlerde her seferinde aynı sonucu döndürür."""
 
     name = "fixed"
+    version = "fixed-test"
+    needs_image = False
 
     def __init__(self):
         self.next = Prediction("plastic", 0.94, (40, 20, 20, 60))
@@ -44,6 +46,11 @@ def client(app):
 @pytest.fixture
 def classifier(app):
     return app.extensions["classifier"]
+
+
+@pytest.fixture
+def ctrl(app):
+    return app.extensions["controller"]
 
 
 @pytest.fixture

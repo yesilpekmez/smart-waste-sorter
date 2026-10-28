@@ -5,6 +5,7 @@ sınıflandırıcıyı kullanır. İkisi de aynı biçimde sonuç döndürür.
 """
 from __future__ import annotations
 
+import hashlib
 import logging
 import random
 from dataclasses import dataclass
@@ -28,6 +29,8 @@ class Prediction:
 
 class MockClassifier:
     name = "mock"
+    version = "mock"
+    needs_image = False  # görüntü olmadan da sonuç üretir
 
     def predict(self, image: Optional[Image.Image]) -> Prediction:
         label = random.choice(WASTE_CLASSES)
@@ -44,11 +47,15 @@ class YoloClassifier:
     """YOLOv8 sınıflandırma (-cls) ve algılama modellerinin ikisini de destekler."""
 
     name = "yolo"
+    needs_image = True
 
     def __init__(self, model_path: str):
         from ultralytics import YOLO
 
         self.model = YOLO(model_path)
+        # Aynı adlı ama farklı eğitilmiş ağırlıklar kayıtlarda ayırt edilebilsin
+        digest = hashlib.sha256(Path(model_path).read_bytes()).hexdigest()[:8]
+        self.version = f"{Path(model_path).stem}-{digest}"
 
     def predict(self, image: Optional[Image.Image]) -> Optional[Prediction]:
         if image is None:

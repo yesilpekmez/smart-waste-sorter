@@ -125,4 +125,4 @@ def test_operations_filter_and_stats(client, classifier):
 
     stats = client.get("/api/stats").get_json()
     assert (stats["total"], stats["completed"], stats["rejected"]) == (3, 2, 1)
-    assert stats["byClass"]["glass"] == {"completed": 1, "rejected": 1, "failed": 0}
+    assert stats["byClass"]["glass"] == {"completed": 1, "rejected": 1, "aborted": 0, "failed": 0}

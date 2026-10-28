@@ -8,33 +8,58 @@ from controller import ControllerFault
 
 from . import sorting
 from .control import controller, simulator, sync_bins
-from .models import WASTE_CLASSES, Bin, Detection, Operation, db
+from .models import OPERATION_STATUSES, WASTE_CLASSES, Bin, Detection, Operation, db
 
 api = Blueprint("api", __name__, url_prefix="/api")
 
 
-def error(message: str, status: int):
-    return jsonify({"error": message}), status
+def error(message: str, status: int, code: str | None = None):
+    body = {"error": message}
+    if code:
+        body["code"] = code
+    return jsonify(body), status
+
+
+def classifier():
+    return current_app.extensions["classifier"]
 
 
 def detection_payload(detection: Detection) -> dict:
+    """Algılamayı, işlem durumu ve şu an ayrılıp ayrılamayacağıyla birlikte döndürür."""
     sync_bins()
-    bin_ = db.session.get(Bin, detection.label)
-    return {**detection.to_dict(), "blockedReason": sorting.rejection_reason(detection, bin_)}
+    refused = sorting.refusal(detection)
+    blocked = None
+    if detection.operation is None:
+        blocked = sorting.rejection_reason(detection, db.session.get(Bin, detection.label))
+    return {
+        **detection.to_dict(),
+        "operation": detection.operation.to_dict() if detection.operation else None,
+        "sortable": refused is None,
+        "refusal": None if refused is None else {"code": refused.code, "message": refused.message},
+        "blockedReason": blocked,
+    }
 
 
 @api.get("/health")
 def health():
     return {
         "status": "ok",
-        "classifier": current_app.extensions["classifier"].name,
+        "classifier": classifier().name,
+        "modelVersion": classifier().version,
         "hardware": current_app.config["HARDWARE"],
+        "minConfidence": current_app.config["MIN_CONFIDENCE"],
+        "fullThreshold": current_app.config["FULL_THRESHOLD"],
     }
 
 
 @api.get("/system")
 def system_status():
-    return {**controller().status(), "itemPresent": controller().item_present()}
+    running = sorting.running_operation()
+    return {
+        **controller().status(),
+        "itemPresent": controller().item_present(),
+        "runningOperationId": running.id if running else None,
+    }
 
 
 @api.post("/system/reset")
@@ -42,7 +67,7 @@ def system_reset():
     try:
         controller().reset()
     except ControllerFault as fault:
-        return error(fault.message, 503)
+        return error(fault.message, 503, fault.code)
     return system_status()
 
 
@@ -67,22 +92,37 @@ def empty_bin(bin_type: str):
 
 @api.post("/detect")
 def detect():
-    """Fotoğraf yüklenirse onu sınıflandırır; yoksa kameradan kare alınmış gibi davranır."""
+    """Kameradan alınan kareyi ya da yüklenen fotoğrafı sınıflandırır.
+
+    Görüntü gönderilmezse yalnızca örnek sınıflandırıcı sonuç üretebilir.
+    """
+    running = sorting.running_operation()
+    if running is not None:
+        return error("Ayırma sürüyor; bitmeden yeni atık algılanamaz", 409, "busy")
+
     image = None
     upload = request.files.get("image")
     if upload:
         try:
             image = Image.open(upload.stream).convert("RGB")
-        except UnidentifiedImageError:
-            return error("Geçersiz görüntü dosyası", 400)
+        except (UnidentifiedImageError, OSError):
+            return error("Geçersiz görüntü dosyası", 400, "invalid_image")
+    elif classifier().needs_image:
+        return error("Sınıflandırma için görüntü gerekli", 400, "image_required")
 
-    prediction = current_app.extensions["classifier"].predict(image)
+    prediction = classifier().predict(image)
     if prediction is None:
-        return error("Görüntüde atık algılanamadı", 422)
+        return error("Görüntüde atık algılanamadı", 422, "no_detection")
 
     x, y, w, h = prediction.box or (None, None, None, None)
     detection = Detection(
-        label=prediction.label, confidence=prediction.confidence, box_x=x, box_y=y, box_w=w, box_h=h
+        label=prediction.label,
+        confidence=prediction.confidence,
+        model_version=classifier().version,
+        box_x=x,
+        box_y=y,
+        box_w=w,
+        box_h=h,
     )
     db.session.add(detection)
     db.session.flush()
@@ -102,9 +142,9 @@ def detect():
 
 @api.get("/detections/latest")
 def latest_detection():
-    detection = Detection.query.order_by(Detection.id.desc()).first()
+    detection = sorting.latest_detection()
     if detection is None:
-        return error("Henüz algılama yok", 404)
+        return error("Henüz algılama yok", 404, "no_detection")
     return detection_payload(detection)
 
 
@@ -118,29 +158,39 @@ def detection_image(detection_id: int):
 
 @api.post("/sort")
 def sort():
-    body = request.get_json(silent=True) or {}
-    detection = db.session.get(Detection, body.get("detectionId"))
+    body = request.get_json(silent=True)
+    detection_id = body.get("detectionId") if isinstance(body, dict) else None
+    # bool da int'in alt türü; true/false kimlik olarak kabul edilmez
+    if not isinstance(detection_id, int) or isinstance(detection_id, bool):
+        return error("detectionId tam sayı olmalı", 400, "invalid_request")
+
+    detection = db.session.get(Detection, detection_id)
     if detection is None:
         return error("Algılama bulunamadı", 404)
-    if Operation.query.filter_by(detection_id=detection.id).first():
-        return error("Bu atık zaten işlendi", 409)
 
     try:
         op = sorting.sort(detection)
-    except ControllerFault as fault:
-        return jsonify({"error": fault.message, "code": fault.code}), 409
+    except sorting.SortRefused as refused:
+        return error(refused.message, 409, refused.code)
     return {"operation": op.to_dict(), "bin": db.session.get(Bin, detection.label).to_dict()}, 201
 
 
 @api.get("/operations")
 def list_operations():
-    limit = min(request.args.get("limit", 20, type=int), 100)
+    limit = min(max(request.args.get("limit", 20, type=int), 1), 100)
     offset = max(request.args.get("offset", 0, type=int), 0)
+    label = request.args.get("label")
+    status = request.args.get("status")
+    if label and label not in WASTE_CLASSES:
+        return error("Bilinmeyen atık türü", 400, "invalid_request")
+    if status and status not in OPERATION_STATUSES:
+        return error("Bilinmeyen işlem durumu", 400, "invalid_request")
+
     query = Operation.query.join(Detection)
-    if request.args.get("label"):
-        query = query.filter(Detection.label == request.args["label"])
-    if request.args.get("status"):
-        query = query.filter(Operation.status == request.args["status"])
+    if label:
+        query = query.filter(Detection.label == label)
+    if status:
+        query = query.filter(Operation.status == status)
 
     total = query.count()
     ops = query.order_by(Operation.id.desc()).offset(offset).limit(limit).all()
@@ -149,23 +199,47 @@ def list_operations():
 
 @api.get("/stats")
 def stats():
+    finished = [s for s in OPERATION_STATUSES if s != "running"]
     rows = (
         db.session.query(Detection.label, Operation.status, func.count(Operation.id))
         .join(Detection)
+        .filter(Operation.status != "running")
         .group_by(Detection.label, Operation.status)
         .all()
     )
-    by_class = {c: {"completed": 0, "rejected": 0, "failed": 0} for c in WASTE_CLASSES}
+    by_class = {c: {s: 0 for s in finished} for c in WASTE_CLASSES}
     for label, status, count in rows:
         by_class[label][status] = count
 
-    totals = {s: sum(c[s] for c in by_class.values()) for s in ("completed", "rejected", "failed")}
+    totals = {s: sum(c[s] for c in by_class.values()) for s in finished}
     total = sum(totals.values())
-    avg_conf = db.session.query(func.avg(Detection.confidence)).join(Operation).scalar()
+    avg_conf = (
+        db.session.query(func.avg(Detection.confidence)).join(Operation).filter(Operation.status != "running").scalar()
+    )
+    avg_duration = db.session.query(func.avg(Operation.duration_ms)).filter_by(status="completed").scalar()
     return {
         "total": total,
         **totals,
         "successRate": totals["completed"] / total if total else None,
         "averageConfidence": avg_conf,
+        "averageDurationMs": avg_duration,
         "byClass": by_class,
     }
+
+
+SIM_FAULTS = {"jam", "position", "home", "stall", "gate_error", "stop_error"}
+
+
+@api.route("/sim/faults", methods=["GET", "PUT"])
+def sim_faults():
+    """Simülasyonda arıza denemek için (yalnızca simülasyon modunda)."""
+    sim = simulator()
+    if sim is None:
+        return error("Yalnızca simülasyon modunda kullanılabilir", 404)
+    if request.method == "PUT":
+        body = request.get_json(silent=True)
+        faults = body.get("faults") if isinstance(body, dict) else None
+        if not isinstance(faults, list) or not set(faults) <= SIM_FAULTS:
+            return error(f"faults şunlardan oluşan bir liste olmalı: {sorted(SIM_FAULTS)}", 400, "invalid_request")
+        sim.world.faults = set(faults)
+    return {"faults": sorted(sim.world.faults)}
