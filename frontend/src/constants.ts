@@ -1,5 +1,5 @@
 import { Cylinder, Files, Milk, Wine, type LucideIcon } from 'lucide-react';
-import type { WasteClass } from './types';
+import type { Operation, WasteClass } from './types';
 
 export const CLASSES: Record<WasteClass, { name: string; Icon: LucideIcon }> = {
   plastic: { name: 'Plastik', Icon: Milk },
@@ -10,18 +10,44 @@ export const CLASSES: Record<WasteClass, { name: string; Icon: LucideIcon }> = {
 
 export const CLASS_ORDER: WasteClass[] = ['plastic', 'paper', 'glass', 'metal'];
 
-// Bu oranın üzerindeki bölmelere atık gönderilmez
-export const FULL_THRESHOLD = 90;
-
-// Bu güvenin altındaki tahminlerde ayırma durdurulur
-export const MIN_CONFIDENCE = 0.6;
-
 export const percent = (v: number) => `%${Math.round(v * 100)}`;
 
-// Kontrol servisinin hata kodları
-export const FAULT_TEXT: Record<string, string> = {
+// Backend'deki işlem nedenleri ve hata kodları
+export const REASON_TEXT: Record<string, string> = {
+  uncertain: 'Belirsiz tahmin',
+  bin_full: 'Bölme dolu',
+  no_item: 'Platformda atık yok',
   jam: 'Sıkışma',
   position_error: 'Konum hatası',
   home_error: 'Referans hatası',
-  no_item: 'Platformda atık yok',
+  timeout: 'Zaman aşımı',
+  driver_error: 'Sürücü hatası',
+  interrupted: 'Yarıda kaldı',
 };
+
+export const reasonText = (code: string | null) => (code ? (REASON_TEXT[code] ?? code) : '');
+
+const STATUS_TEXT: Record<Operation['status'], string> = {
+  running: 'Ayrılıyor',
+  completed: 'Ayrıldı',
+  rejected: 'Reddedildi',
+  aborted: 'Başlatılamadı',
+  failed: 'Arıza',
+};
+
+export function operationText(op: Operation): string {
+  const reason = reasonText(op.reason);
+  return reason && op.status !== 'completed' ? `${STATUS_TEXT[op.status]} · ${reason}` : STATUS_TEXT[op.status];
+}
+
+export const STATE_TEXT: Record<string, string> = {
+  idle: 'Hazır',
+  routing: 'Platform dönüyor',
+  dropping: 'Atık bırakılıyor',
+  verifying: 'Doğrulanıyor',
+  returning: 'Referansa dönüyor',
+  fault: 'Arıza',
+};
+
+export const formatTime = (iso: string) =>
+  new Date(iso).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });

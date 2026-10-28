@@ -14,8 +14,8 @@ Kamera → YOLOv8 (ai/) → Flask API (backend/) → Kontrol durum makinesi (con
 |---|---|
 | Yapay zekâ | YOLOv8n-cls, TrashNet ile eğitildi: test doğruluğu %92,5, makro F1 0,913 |
 | Backend | Algılama, ayırma, doluluk, işlem geçmişi ve istatistik API'si |
-| Kontrol yazılımı | Durum makinesi ve güvenli durdurma; simüle donanımla çalışıyor |
-| Panel | Canlı görünüm, sınıflandırma, doluluk, arıza yönetimi, işlem geçmişi |
+| Kontrol yazılımı | Durum makinesi, güvenli durdurma, zaman aşımları; simüle donanımla çalışıyor |
+| Panel | Kameradan kare alıp analiz, karar karesi, doluluk, arıza yönetimi, işlem geçmişi |
 | Donanım | Raspberry Pi sürücüleri ve montaj: sırada |
 
 ## Klasörler
@@ -47,6 +47,23 @@ cd frontend && npm install && npm run dev
 
 `ai/weights/best.pt` yoksa backend örnek sınıflandırıcıyla çalışır.
 
+Veritabanı şeması değiştiğinde (geliştirme sırasında) `backend/instance/ayir.db` silinmelidir.
+Backend tek süreç olarak çalıştırılmalıdır: donanıma komut veren kontrol servisi süreç içindedir.
+
+## Atık döngüsü
+
+Platformdaki atık için yalnızca **en son algılama** ayrılabilir; yeni bir algılama öncekileri geçersiz
+kılar. Her algılama en fazla bir kez işlenir (veritabanında tekil). Ayırma sürerken yeni algılama ve
+ikinci ayırma reddedilir. İşlem kaydı hareketten önce `running` olarak yazılır; uygulama hareket
+sırasında kapanırsa açılışta `failed / interrupted` olarak kapatılır.
+
+| İşlem durumu | Anlamı |
+|---|---|
+| `completed` | Atık bölmeye bırakıldı |
+| `rejected` | Yazılım kuralı engelledi: `uncertain` (güven < eşik), `bin_full` |
+| `aborted` | Başlatılamadı, arıza değil: `no_item` |
+| `failed` | Donanım arızası: `jam`, `position_error`, `home_error`, `timeout`, `driver_error`, `interrupted` |
+
 ## Testler
 
 ```bash
@@ -59,7 +76,9 @@ backend/.venv/bin/python -m pytest tests
 |---|---|
 | `POST /api/detect` | Fotoğrafı sınıflandırır (`image` alanı, multipart) |
 | `POST /api/sort` | `{detectionId}`: kuralları uygular, ayırmayı başlatır |
-| `GET /api/bins` | Bölmelerin doluluğu (sensörlerden) |
+| `GET /api/bins` | Bölmelerin yaklaşık doluluğu (mesafe sensörlerinden yığın yüksekliği) |
 | `GET /api/system`, `POST /api/system/reset` | Kontrol servisinin durumu, arızadan sonra sıfırlama |
 | `GET /api/operations` | İşlem geçmişi (`label`, `status`, `limit`, `offset`) |
-| `GET /api/stats` | Başarı oranı, ortalama güven, sınıf bazında sayılar |
+| `GET /api/detections/latest` | Son algılama; işlem sonucu ve şu an ayrılabilir olup olmadığıyla |
+| `GET /api/stats` | Başarı oranı, ortalama güven ve süre, sınıf bazında sayılar |
+| `GET/PUT /api/sim/faults` | Yalnızca simülasyonda: arıza dene (`jam`, `position`, `home`, `stall`, `gate_error`, `stop_error`) |

@@ -1,22 +1,26 @@
-import { useEffect, useState } from 'react';
-import { ImageOff } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { ImageOff, X } from 'lucide-react';
 import { api } from '../api';
-import { CLASSES, CLASS_ORDER, FAULT_TEXT, percent } from '../constants';
+import { CLASSES, CLASS_ORDER, STATE_TEXT, operationText, percent } from '../constants';
 import type { Operation, Stats } from '../types';
 
 const PAGE_SIZE = 20;
 
 const STATUS_FILTERS = [
   { value: '', label: 'Tümü' },
-  { value: 'completed', label: 'Tamamlanan' },
-  { value: 'rejected', label: 'Durdurulan' },
+  { value: 'completed', label: 'Ayrılan' },
+  { value: 'rejected', label: 'Reddedilen' },
+  { value: 'aborted', label: 'Başlatılamayan' },
   { value: 'failed', label: 'Arıza' },
 ];
 
-const REASON_TEXT: Record<string, string> = {
-  uncertain: 'Belirsiz tahmin',
-  bin_full: 'Bölme dolu',
-  ...FAULT_TEXT,
+const formatDateTime = (iso: string) => {
+  const d = new Date(iso);
+  return `${d.toLocaleDateString('tr-TR', { day: '2-digit', month: 'short' })} ${d.toLocaleTimeString('tr-TR', {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  })}`;
 };
 
 export function History() {
@@ -27,27 +31,36 @@ export function History() {
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
+  const [selected, setSelected] = useState<Operation | null>(null);
+  // Hızlı filtre değişiminde eski isteğin yanıtı yenisini ezmesin
+  const requestId = useRef(0);
 
   useEffect(() => {
     api.stats().then(setStats).catch(() => setError(true));
   }, []);
 
   useEffect(() => {
+    const id = ++requestId.current;
     setLoading(true);
     api
       .operations({ label, status, limit: PAGE_SIZE })
       .then((res) => {
+        if (id !== requestId.current) return;
         setItems(res.items);
         setTotal(res.total);
+        setError(false);
       })
-      .catch(() => setError(true))
-      .finally(() => setLoading(false));
+      .catch(() => id === requestId.current && setError(true))
+      .finally(() => id === requestId.current && setLoading(false));
   }, [label, status]);
 
   const loadMore = async () => {
+    const id = ++requestId.current;
     setLoading(true);
     const res = await api.operations({ label, status, limit: PAGE_SIZE, offset: items.length }).catch(() => null);
+    if (id !== requestId.current) return;
     if (res) setItems((prev) => [...prev, ...res.items]);
+    else setError(true);
     setLoading(false);
   };
 
@@ -68,15 +81,20 @@ export function History() {
         <StatTile
           label="Başarılı ayırma"
           value={stats?.successRate != null ? percent(stats.successRate) : '—'}
-          note={stats ? `${stats.completed} işlem` : undefined}
+          note={
+            stats
+              ? `${stats.completed} işlem${stats.averageDurationMs ? ` · ort. ${(stats.averageDurationMs / 1000).toFixed(1)} sn` : ''}`
+              : undefined
+          }
         />
         <StatTile
           label="Ortalama güven"
           value={stats?.averageConfidence != null ? percent(stats.averageConfidence) : '—'}
         />
         <StatTile
-          label="Durdurulan / arıza"
+          label="Reddedilen / arıza"
           value={stats ? `${stats.rejected} / ${stats.failed}` : '—'}
+          note={stats?.aborted ? `${stats.aborted} başlatılamadı` : undefined}
           warn={!!stats && stats.failed > 0}
         />
       </div>
@@ -115,7 +133,7 @@ export function History() {
             </thead>
             <tbody>
               {items.map((op) => (
-                <OperationRow key={op.id} op={op} />
+                <OperationRow key={op.id} op={op} onOpen={() => setSelected(op)} />
               ))}
             </tbody>
           </table>
@@ -133,15 +151,16 @@ export function History() {
           )}
         </div>
       </section>
+
+      {selected && <OperationDialog op={selected} onClose={() => setSelected(null)} />}
     </main>
   );
 }
 
-function OperationRow({ op }: { op: Operation }) {
+function OperationRow({ op, onOpen }: { op: Operation; onOpen: () => void }) {
   const { name, Icon } = CLASSES[op.label];
-  const time = new Date(op.createdAt);
   return (
-    <tr>
+    <tr className="table__row" onClick={onOpen} tabIndex={0} onKeyDown={(e) => e.key === 'Enter' && onOpen()}>
       <td>
         {op.imageUrl ? (
           <img className="thumb" src={op.imageUrl} alt={name} loading="lazy" />
@@ -158,19 +177,84 @@ function OperationRow({ op }: { op: Operation }) {
       </td>
       <td>{percent(op.confidence)}</td>
       <td>
-        {op.status === 'completed' ? (
-          <span className="badge">Ayrıldı</span>
-        ) : (
-          <span className="badge badge--warn">
-            {op.status === 'failed' ? 'Arıza' : 'Durduruldu'} · {REASON_TEXT[op.reason ?? ''] ?? op.reason}
-          </span>
-        )}
+        <span className={`badge ${op.status === 'completed' ? '' : 'badge--warn'}`}>{operationText(op)}</span>
       </td>
-      <td className="table__time muted">
-        {time.toLocaleDateString('tr-TR', { day: '2-digit', month: 'short' })}{' '}
-        {time.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
-      </td>
+      <td className="table__time muted">{formatDateTime(op.createdAt)}</td>
     </tr>
+  );
+}
+
+function OperationDialog({ op, onClose }: { op: Operation; onClose: () => void }) {
+  const { name } = CLASSES[op.label];
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  return (
+    <div className="dialog__backdrop" onClick={onClose}>
+      <div
+        className="dialog card"
+        role="dialog"
+        aria-modal="true"
+        aria-label={`İşlem #${op.id}`}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="card__head">
+          <h2 className="card__title">
+            İşlem #{op.id} · {name}
+          </h2>
+          <button className="dialog__close" onClick={onClose} aria-label="Kapat">
+            <X size={20} />
+          </button>
+        </div>
+
+        <div className="dialog__body">
+          {op.imageUrl ? (
+            <img className="dialog__image" src={op.imageUrl} alt={`Algılanan atık: ${name}`} />
+          ) : (
+            <div className="dialog__image thumb--empty">
+              <ImageOff size={28} strokeWidth={1.5} />
+            </div>
+          )}
+
+          <dl className="rows rows--compact">
+            <Row label="Sonuç" value={operationText(op)} warn={op.status !== 'completed'} />
+            {op.message && <Row label="Ayrıntı" value={op.message} />}
+            <Row label="Tahmin" value={`${name} · ${percent(op.confidence)}`} />
+            <Row label="Model" value={op.modelVersion} />
+            <Row label="Eşikler" value={`Güven ≥ ${op.minConfidence} · Dolu ≥ %${op.fullThreshold}`} />
+            <Row label="Başlangıç" value={formatDateTime(op.createdAt)} />
+            {op.durationMs !== null && <Row label="Süre" value={`${(op.durationMs / 1000).toFixed(2)} sn`} />}
+          </dl>
+        </div>
+
+        {op.trace.length > 0 && (
+          <>
+            <h3 className="dialog__subtitle">Aşamalar · başlangıçtan itibaren</h3>
+            <ol className="trace">
+              {op.trace.map(([state, t], i) => (
+                <li key={i} className={state === 'fault' ? 'text-warn' : undefined}>
+                  <span>{STATE_TEXT[state] ?? state}</span>
+                  <span className="muted">{t.toFixed(2)} sn</span>
+                </li>
+              ))}
+            </ol>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function Row({ label, value, warn }: { label: string; value: string; warn?: boolean }) {
+  return (
+    <div className="row">
+      <dt>{label}</dt>
+      <dd className={warn ? 'text-warn' : undefined}>{value}</dd>
+    </div>
   );
 }
 

@@ -1,4 +1,4 @@
-import type { Bin, Detection, Operation, Stats, SystemStatus } from './types';
+import type { Bin, Detection, Health, Operation, Stats, SystemStatus } from './types';
 
 export class ApiError extends Error {
   constructor(
@@ -10,10 +10,22 @@ export class ApiError extends Error {
   }
 }
 
+// Sunucuya ulaşılamıyor (ağ hatası ya da geliştirme sunucusunun vekil hatası)
+export class NetworkError extends Error {}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`/api${path}`, init);
-  const body = await res.json().catch(() => ({}));
-  if (!res.ok) throw new ApiError(body.error ?? 'Beklenmeyen bir hata oluştu', res.status, body.code);
+  let res: Response;
+  try {
+    res = await fetch(`/api${path}`, init);
+  } catch {
+    throw new NetworkError('Sunucuya bağlanılamadı');
+  }
+  const body = await res.json().catch(() => null);
+  if (!res.ok) {
+    // Backend kapalıyken Vite gövdesiz 500 döndürür; bu bir API yanıtı değildir
+    if (res.status >= 500 && !body?.error) throw new NetworkError('Sunucuya bağlanılamadı');
+    throw new ApiError(body?.error ?? 'Beklenmeyen bir hata oluştu', res.status, body?.code);
+  }
   return body as T;
 }
 
@@ -25,12 +37,17 @@ const post = <T>(path: string, json?: unknown) =>
   });
 
 export const api = {
-  health: () => request<{ status: string; classifier: string; hardware: string }>('/health'),
+  health: () => request<Health>('/health'),
   system: () => request<SystemStatus>('/system'),
   resetSystem: () => post<SystemStatus>('/system/reset'),
   bins: () => request<Bin[]>('/bins'),
   emptyBin: (type: string) => post<Bin>(`/bins/${type}/empty`),
-  latestDetection: () => request<Detection>('/detections/latest'),
+  // Henüz algılama yoksa null
+  latestDetection: () =>
+    request<Detection>('/detections/latest').catch((e) => {
+      if (e instanceof ApiError && e.status === 404) return null;
+      throw e;
+    }),
   operations: (params: { limit?: number; offset?: number; label?: string; status?: string } = {}) => {
     const query = new URLSearchParams(
       Object.entries(params)
@@ -42,7 +59,7 @@ export const api = {
   stats: () => request<Stats>('/stats'),
   sort: (detectionId: number) => post<{ operation: Operation; bin: Bin }>('/sort', { detectionId }),
 
-  // Görüntü verilmezse sunucu kameradan kare alınmış gibi davranır
+  // Görüntü verilmezse yalnızca örnek sınıflandırıcı sonuç üretir
   detect: (image?: File) => {
     if (!image) return post<Detection>('/detect');
     const form = new FormData();

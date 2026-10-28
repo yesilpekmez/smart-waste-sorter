@@ -728,3 +728,152 @@ button {
     font-size: 14px;
   }
 }
+
+/* Kameradan kare alma */
+
+.capture {
+  position: absolute;
+  left: 50%;
+  bottom: 16px;
+  transform: translateX(-50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 20px;
+  border-radius: 999px;
+  background: var(--green);
+  color: #fff;
+  font-size: 15px;
+  box-shadow: 0 6px 20px rgba(27, 42, 34, 0.18);
+}
+
+.capture:hover:not(:disabled) {
+  background: var(--green-dark);
+}
+
+.capture:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.result__hint {
+  margin: -12px 0 20px;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.btn-primary:disabled {
+  cursor: not-allowed;
+}
+
+.btn-small:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+
+/* Geçmiş ayrıntısı */
+
+.table__row {
+  cursor: pointer;
+}
+
+.table__row:hover td,
+.table__row:focus-visible td {
+  background: #f7faf8;
+}
+
+.dialog__backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(27, 42, 34, 0.35);
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  z-index: 10;
+  animation: appear 0.2s ease;
+}
+
+.dialog {
+  width: min(760px, 100%);
+  max-height: calc(100vh - 32px);
+  overflow-y: auto;
+}
+
+.dialog__close {
+  background: none;
+  color: var(--muted);
+  padding: 4px;
+  border-radius: 8px;
+}
+
+.dialog__close:hover {
+  color: var(--text);
+  background: #f0f4f1;
+}
+
+.dialog__body {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+  margin-top: 20px;
+}
+
+.dialog__image {
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  object-fit: contain;
+  background: #f0f4f1;
+  border-radius: 14px;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+}
+
+.rows--compact {
+  margin: 0;
+}
+
+.rows--compact .row {
+  padding: 10px 0;
+  font-size: 14px;
+  gap: 16px;
+}
+
+.rows--compact .row:first-child {
+  border-top: none;
+}
+
+.rows--compact dd {
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
+.dialog__subtitle {
+  font-size: 15px;
+  font-weight: 600;
+  margin: 24px 0 8px;
+}
+
+.trace {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.trace li {
+  display: flex;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: #f0f4f1;
+  font-size: 13px;
+}
+
+@media (max-width: 600px) {
+  .dialog__body {
+    grid-template-columns: 1fr;
+  }
+}
