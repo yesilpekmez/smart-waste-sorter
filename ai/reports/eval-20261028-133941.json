@@ -1,0 +1,209 @@
+{
+  "weights": "/Users/sevketyesilpekmez/Desktop/smart-waste-sorter/ai/weights/best.pt",
+  "model_version": "best-c48b4813",
+  "min_confidence": 0.6,
+  "data": "/Users/sevketyesilpekmez/Desktop/smart-waste-sorter/ai/datasets/trashnet/test",
+  "total": 362,
+  "accuracy": 0.925414364640884,
+  "macro_f1": 0.913429485030397,
+  "low_confidence": 4,
+  "errors": 27,
+  "confident_errors": [
+    {
+      "file": "glass117.jpg",
+      "true": "glass",
+      "pred": "metal",
+      "confidence": 0.7710984945297241
+    },
+    {
+      "file": "glass126.jpg",
+      "true": "glass",
+      "pred": "metal",
+      "confidence": 0.9462745189666748
+    },
+    {
+      "file": "glass190.jpg",
+      "true": "glass",
+      "pred": "metal",
+      "confidence": 0.9935455918312073
+    },
+    {
+      "file": "glass314.jpg",
+      "true": "glass",
+      "pred": "metal",
+      "confidence": 0.6580907702445984
+    },
+    {
+      "file": "glass375.jpg",
+      "true": "glass",
+      "pred": "metal",
+      "confidence": 0.9823759198188782
+    },
+    {
+      "file": "glass462.jpg",
+      "true": "glass",
+      "pred": "plastic",
+      "confidence": 0.7075343728065491
+    },
+    {
+      "file": "metal199.jpg",
+      "true": "metal",
+      "pred": "paper",
+      "confidence": 0.9481074213981628
+    },
+    {
+      "file": "metal208.jpg",
+      "true": "metal",
+      "pred": "plastic",
+      "confidence": 0.6898083090782166
+    },
+    {
+      "file": "cardboard140.jpg",
+      "true": "paper",
+      "pred": "metal",
+      "confidence": 0.6104804873466492
+    },
+    {
+      "file": "cardboard171.jpg",
+      "true": "paper",
+      "pred": "glass",
+      "confidence": 0.9950658082962036
+    },
+    {
+      "file": "paper201.jpg",
+      "true": "paper",
+      "pred": "metal",
+      "confidence": 0.9569147229194641
+    },
+    {
+      "file": "paper370.jpg",
+      "true": "paper",
+      "pred": "plastic",
+      "confidence": 0.6776526570320129
+    },
+    {
+      "file": "plastic112.jpg",
+      "true": "plastic",
+      "pred": "metal",
+      "confidence": 0.8997742533683777
+    },
+    {
+      "file": "plastic199.jpg",
+      "true": "plastic",
+      "pred": "glass",
+      "confidence": 0.9535162448883057
+    },
+    {
+      "file": "plastic216.jpg",
+      "true": "plastic",
+      "pred": "glass",
+      "confidence": 0.9998165965080261
+    },
+    {
+      "file": "plastic29.jpg",
+      "true": "plastic",
+      "pred": "glass",
+      "confidence": 0.8712462186813354
+    },
+    {
+      "file": "plastic303.jpg",
+      "true": "plastic",
+      "pred": "glass",
+      "confidence": 0.6877185702323914
+    },
+    {
+      "file": "plastic307.jpg",
+      "true": "plastic",
+      "pred": "metal",
+      "confidence": 0.9938979744911194
+    },
+    {
+      "file": "plastic369.jpg",
+      "true": "plastic",
+      "pred": "paper",
+      "confidence": 0.695870578289032
+    },
+    {
+      "file": "plastic435.jpg",
+      "true": "plastic",
+      "pred": "glass",
+      "confidence": 0.6069914102554321
+    },
+    {
+      "file": "plastic460.jpg",
+      "true": "plastic",
+      "pred": "paper",
+      "confidence": 0.8475707769393921
+    },
+    {
+      "file": "plastic465.jpg",
+      "true": "plastic",
+      "pred": "paper",
+      "confidence": 0.975387454032898
+    },
+    {
+      "file": "plastic84.jpg",
+      "true": "plastic",
+      "pred": "paper",
+      "confidence": 0.9800031185150146
+    },
+    {
+      "file": "plastic95.jpg",
+      "true": "plastic",
+      "pred": "glass",
+      "confidence": 0.9729356169700623
+    }
+  ],
+  "per_class": {
+    "glass": {
+      "precision": 0.8860759493670886,
+      "recall": 0.9210526315789473,
+      "f1": 0.9032258064516129,
+      "support": 76
+    },
+    "metal": {
+      "precision": 0.8676470588235294,
+      "recall": 0.9516129032258065,
+      "f1": 0.9076923076923077,
+      "support": 62
+    },
+    "paper": {
+      "precision": 0.9668874172185431,
+      "recall": 0.9668874172185431,
+      "f1": 0.9668874172185431,
+      "support": 151
+    },
+    "plastic": {
+      "precision": 0.9375,
+      "recall": 0.821917808219178,
+      "f1": 0.8759124087591241,
+      "support": 73
+    }
+  },
+  "confusion_matrix": {
+    "glass": {
+      "glass": 70,
+      "metal": 5,
+      "paper": 0,
+      "plastic": 1
+    },
+    "metal": {
+      "glass": 0,
+      "metal": 59,
+      "paper": 1,
+      "plastic": 2
+    },
+    "paper": {
+      "glass": 2,
+      "metal": 2,
+      "paper": 146,
+      "plastic": 1
+    },
+    "plastic": {
+      "glass": 7,
+      "metal": 2,
+      "paper": 4,
+      "plastic": 60
+    }
+  }
+}

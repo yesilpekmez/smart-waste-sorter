@@ -10,6 +10,7 @@ Kullanım:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 from datetime import datetime
 from pathlib import Path
@@ -32,17 +33,21 @@ def main() -> None:
     matrix = {t: {p: 0 for p in classes} for t in classes}
     low_confidence = 0
     low_confidence_correct = 0
+    confident_errors = []  # eşiği geçen yanlış tahminler: sistem bunları ayırır
     total = 0
 
     for true_cls in classes:
         files = [f for f in sorted((Path(args.data) / true_cls).iterdir()) if f.suffix.lower() in IMAGE_EXTS]
-        for result in model.predict([str(f) for f in files], verbose=False, stream=True):
+        for path, result in zip(files, model.predict([str(f) for f in files], verbose=False, stream=True)):
             pred_cls = result.names[result.probs.top1]
+            conf = float(result.probs.top1conf)
             matrix[true_cls][pred_cls] += 1
             total += 1
-            if float(result.probs.top1conf) < args.min_confidence:
+            if conf < args.min_confidence:
                 low_confidence += 1
                 low_confidence_correct += pred_cls == true_cls
+            elif pred_cls != true_cls:
+                confident_errors.append({"file": path.name, "true": true_cls, "pred": pred_cls, "confidence": conf})
 
     per_class = {}
     for c in classes:
@@ -56,13 +61,21 @@ def main() -> None:
 
     accuracy = sum(matrix[c][c] for c in classes) / total
     macro_f1 = sum(m["f1"] for m in per_class.values()) / len(classes)
+    errors = total - sum(matrix[c][c] for c in classes)
+    accepted = total - low_confidence
+    model_version = f"{Path(args.weights).stem}-{hashlib.sha256(Path(args.weights).read_bytes()).hexdigest()[:8]}"
 
-    print(f"\nTest görüntüsü: {total}")
+    print(f"\nModel:          {model_version}")
+    print(f"Test görüntüsü: {total}")
     print(f"Doğruluk:       {accuracy:.3f}")
     print(f"Makro F1:       {macro_f1:.3f}")
     print(
         f"Güven < {args.min_confidence}: {low_confidence} görüntü "
-        f"(bunların {low_confidence_correct} tanesi doğruydu; sistem bunları ayırmaz)\n"
+        f"(bunların {low_confidence_correct} tanesi doğruydu; sistem bunları ayırmaz)"
+    )
+    print(
+        f"Yanlış tahmin:  {errors}; bunların {len(confident_errors)} tanesi eşiği geçiyor "
+        f"→ ayrılan atıklarda hata oranı {len(confident_errors) / accepted:.1%}\n"
     )
     print(f"{'sınıf':10}{'kesinlik':>10}{'duyarlılık':>12}{'F1':>8}{'adet':>7}")
     for c, m in per_class.items():
@@ -80,11 +93,15 @@ def main() -> None:
         json.dumps(
             {
                 "weights": args.weights,
+                "model_version": model_version,
+                "min_confidence": args.min_confidence,
                 "data": args.data,
                 "total": total,
                 "accuracy": accuracy,
                 "macro_f1": macro_f1,
                 "low_confidence": low_confidence,
+                "errors": errors,
+                "confident_errors": confident_errors,
                 "per_class": per_class,
                 "confusion_matrix": matrix,
             },

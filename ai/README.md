@@ -11,6 +11,22 @@ Atıkları dört sınıfa ayıran YOLOv8 sınıflandırma modeli: **cam, metal, 
 - **Kendi veri setimiz:** Platform kamerasıyla çekilen görüntüler aynı klasör yapısında toplanacak;
   hazır veriyle eğitilen ve kendi verimizle ince ayar yapılan modeller karşılaştırılacak.
 
+## Tekrarlanabilir bölünme
+
+Train/val/test bölünmesi `splits/trashnet-v1.csv` dosyasında saklanır ve git'e eklenir.
+`prepare_trashnet.py` bu dosya varsa bölünmeyi oradan okur; böylece her bilgisayarda aynı test
+kümesi oluşur ve farklı modeller aynı görüntülerde karşılaştırılabilir. İlk modelin (best-c48b4813)
+sonuçları bu bölünmeye aittir.
+
+## Bilinen sınırlar
+
+- **Güven eşiği tek başına yeterli değil.** Testteki 27 yanlış tahminin 24'ü 0,6 eşiğini geçiyor;
+  sistemin ayıracağı atıklarda hata oranı ~%6,7. `evaluate.py` bu sayıyı ayrıca raporlar.
+- **Kapalı küme.** Model her görüntüyü dört sınıftan birine atar. Boş platform ya da kapsam dışı
+  nesneler için yüksek güvenli yanlış sonuç verebilir (ör. kameranın test deseni %71 "kâğıt"
+  olarak sınıflandı). Boş platform ve "diğer" görüntüleri kendi veri setine eklenmeli.
+- **TrashNet ≠ bizim platform.** Test başarısı, gerçek platformdaki başarıyı göstermez.
+
 ## Kurulum
 
 ```bash
@@ -29,6 +45,10 @@ python3 -m venv .venv
 `weights/best.pt` oluştuğunda backend bu modeli kendiliğinden kullanır.
 
 ## Kendi veri setini ekleme
+
+Aynı fiziksel nesnenin birbirine çok benzeyen kareleri eğitim ve teste dağıtılmamalı; aksi halde
+test sonucu olduğundan iyi çıkar. Dosya adına nesne numarası yazıp (ör. `plastic_n012_03.jpg`)
+bölmeyi nesne bazında yap.
 
 ```
 datasets/kendi/
