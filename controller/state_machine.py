@@ -10,6 +10,15 @@ bile sistem arıza durumunda kalır.
 
 Sürücülerden gelen her hata (ControllerFault dışındakiler de) ve zaman aşımına
 uğrayan her hareket arızaya dönüştürülür.
+
+Arıza, ayırmayı yürüten iş parçacığının dışında da oluşabilir (ör. panelin
+atık sensörü okuması). Bu durumda arıza kaydedilir ve çıkışlar durdurulur;
+ayırma her hareketten önce ve sonra arızayı denetlediği için yeni hareket
+başlatmaz. Denetim ile hareketin başlatılması aynı kilit altındadır.
+
+Doluluk sensörleri hareketi etkilemez: okunamayan bölmenin doluluğu "bilinmiyor"
+(None) döner ve sistemi arızaya sokmaz; o bölmeye ayırma yapılıp yapılmayacağına
+backend karar verir.
 """
 from __future__ import annotations
 
@@ -23,6 +32,8 @@ from .hardware import BIN_ANGLES, Hardware, fill_percent
 
 POSITION_TOLERANCE_DEG = 2.0
 POLL_INTERVAL_S = 0.05
+# Doluluk sensörü çağrılarının etiket öneki; bunlar sıfırlamayı engellemez
+FILL_LABEL = "Doluluk: "
 
 
 @dataclass
@@ -80,7 +91,9 @@ class SortController:
         self.timeouts = timeouts or Timeouts()
         self.state = State.IDLE
         self.fault: Optional[ControllerFault] = None
+        # Ayırma ve sıfırlama komutlarının sahipliği
         self._lock = threading.Lock()
+        # Arıza/durum değişiklikleri ve sürücü iş parçacıklarının kaydı
         self._workers_lock = threading.Lock()
         self._workers: dict[str, threading.Thread] = {}
         self._call_locks: dict[str, threading.Lock] = {}
@@ -88,23 +101,30 @@ class SortController:
     # Durum sorguları
 
     def fill_levels(self) -> dict:
-        return {t: fill_percent(self._read(s.distance_cm, f"Doluluk: {t}")) for t, s in self.hw.fill_sensors.items()}
+        """Bölme türü → yaklaşık doluluk yüzdesi; okunamayan sensör için None."""
+        levels = {}
+        for bin_type, sensor in self.hw.fill_sensors.items():
+            try:
+                levels[bin_type] = fill_percent(self._call(sensor.distance_cm, self.timeouts.sensor, FILL_LABEL + bin_type))
+            except Exception:
+                levels[bin_type] = None
+        return levels
 
     def item_present(self) -> bool:
-        return self._read(self.hw.presence.item_present, "Atık sensörü")
-
-    def _read(self, action, label):
+        """Atık sensörünü okur. Sensör hata verirse arıza kaydedilir ve çıkışlar durdurulur."""
         try:
-            return self._call(action, self.timeouts.sensor, label)
+            return self._call(self.hw.presence.item_present, self.timeouts.sensor, "Atık sensörü")
         except Exception as exc:
             fault = self._as_fault(exc)
             self._safe_stop(fault)
-            raise fault
+            raise self.fault
 
     def status(self) -> dict:
+        with self._workers_lock:
+            fault, state = self.fault, self.state
         return {
-            "state": self.state.value,
-            "fault": None if self.fault is None else {"code": self.fault.code, "message": self.fault.message},
+            "state": state.value,
+            "fault": None if fault is None else {"code": fault.code, "message": fault.message},
         }
 
     # Komutlar
@@ -122,7 +142,7 @@ class SortController:
         if not self._lock.acquire(blocking=False):
             raise ControllerFault("busy", "Başka bir ayırma işlemi sürüyor")
         try:
-            if self.state == State.FAULT:
+            if self.fault is not None:
                 raise ControllerFault("faulted", "Sistem arıza durumunda; önce sıfırlanmalı")
             return self._run(target_bin)
         finally:
@@ -137,20 +157,27 @@ class SortController:
             raise ControllerFault("busy", "Başka bir işlem sürüyor")
         try:
             with self._workers_lock:
-                pending = any(worker.is_alive() for worker in self._workers.values())
+                pending = any(
+                    worker.is_alive() for label, worker in self._workers.items() if not label.startswith(FILL_LABEL)
+                )
             if pending:
+                # Asıl arıza nedeni korunur; yalnızca sıfırlama reddedilir
                 raise ControllerFault("busy", "Önceki sürücü komutu henüz durmadı; sıfırlama engellendi")
+        except ControllerFault:
+            self._lock.release()
+            raise
+        try:
             self._call(self.hw.gate.close, self.timeouts.gate, "Kapağın kapanması")
             self._call(self.hw.platform.home, self.timeouts.home, "Referansa dönüş")
             if not self._call(self.hw.platform.at_reference, self.timeouts.sensor, "Referans sensörü"):
                 raise ControllerFault("home_error", "Platform referans konumuna dönemedi")
         except Exception as exc:
-            fault = self._as_fault(exc)
-            self._safe_stop(fault)
+            self._safe_stop(self._as_fault(exc), replace=True)
             raise self.fault
         else:
-            self.fault = None
-            self.state = State.IDLE
+            with self._workers_lock:
+                self.fault = None
+                self.state = State.IDLE
         finally:
             self._lock.release()
 
@@ -161,34 +188,44 @@ class SortController:
         trace = []
 
         def enter(state: State) -> None:
-            self.state = state
+            # Dışarıdan kaydedilen arızanın üzerine yazılmaz
+            with self._workers_lock:
+                if self.fault is not None:
+                    raise self.fault
+                self.state = state
             trace.append((state.value, round(self.clock() - start, 3)))
+
+        def step(action, timeout, what):
+            return self._call(action, timeout, what, guarded=True)
 
         def result(**kwargs) -> SortResult:
             return SortResult(target_bin=target_bin, trace=trace, duration_s=round(self.clock() - start, 3), **kwargs)
 
         try:
-            if not self._call(self.hw.presence.item_present, self.timeouts.sensor, "Atık sensörü"):
+            if not step(self.hw.presence.item_present, self.timeouts.sensor, "Atık sensörü"):
                 return result(ok=False, error_code="no_item", error="Platformda atık yok")
 
             enter(State.ROUTING)
             angle = BIN_ANGLES[target_bin]
-            self._call(lambda: self.hw.platform.rotate_to(angle), self.timeouts.move, "Platformun dönmesi")
-            if abs(self._call(self.hw.platform.position, self.timeouts.sensor, "Konum sensörü") - angle) > POSITION_TOLERANCE_DEG:
+            step(lambda: self.hw.platform.rotate_to(angle), self.timeouts.move, "Platformun dönmesi")
+            if abs(step(self.hw.platform.position, self.timeouts.sensor, "Konum sensörü") - angle) > POSITION_TOLERANCE_DEG:
                 raise ControllerFault("position_error", "Platform hedef açıya ulaşamadı")
 
             enter(State.DROPPING)
-            self._call(self.hw.gate.open, self.timeouts.gate, "Kapağın açılması")
-            dropped = self._wait_until(lambda: not self._call(self.hw.presence.item_present, self.timeouts.sensor, "Atık sensörü"), self.timeouts.drop)
-            self._call(self.hw.gate.close, self.timeouts.gate, "Kapağın kapanması")
+            step(self.hw.gate.open, self.timeouts.gate, "Kapağın açılması")
+            dropped = self._wait_until(
+                lambda: not step(self.hw.presence.item_present, self.timeouts.sensor, "Atık sensörü"),
+                self.timeouts.drop,
+            )
+            step(self.hw.gate.close, self.timeouts.gate, "Kapağın kapanması")
 
             enter(State.VERIFYING)
             if not dropped:
                 raise ControllerFault("jam", "Atık platformdan ayrılmadı (sıkışma)")
 
             enter(State.RETURNING)
-            self._call(self.hw.platform.home, self.timeouts.home, "Referansa dönüş")
-            if not self._call(self.hw.platform.at_reference, self.timeouts.sensor, "Referans sensörü"):
+            step(self.hw.platform.home, self.timeouts.home, "Referansa dönüş")
+            if not step(self.hw.platform.at_reference, self.timeouts.sensor, "Referans sensörü"):
                 raise ControllerFault("home_error", "Platform referans konumuna dönemedi")
 
             enter(State.IDLE)
@@ -206,10 +243,18 @@ class SortController:
             return exc
         return ControllerFault("driver_error", f"Beklenmeyen sürücü hatası: {type(exc).__name__}: {exc}")
 
-    def _safe_stop(self, fault: ControllerFault) -> None:
-        """Motoru durdurur ve kapağı kapatır; bunlar da başarısız olsa arıza durumunda kalır."""
-        self.fault = fault
-        self.state = State.FAULT
+    def _safe_stop(self, fault: ControllerFault, replace: bool = False) -> None:
+        """Arızayı kaydeder, motoru durdurur ve kapağı kapatır.
+
+        Bir arıza olayında ilk neden korunur; sıfırlama gibi yeni bir denemenin
+        başarısızlığı ise (replace=True) önceki kaydın yerine geçer. Durdurma
+        adımları başarısız olsa da sistem arıza durumunda kalır. Hangi iş
+        parçacığından çağrıldığı fark etmez.
+        """
+        with self._workers_lock:
+            if self.fault is None or replace:
+                self.fault = fault
+            self.state = State.FAULT
         problems = []
         for action, label in ((self.hw.platform.stop, "motor durdurulamadı"), (self.hw.gate.close, "kapak kapatılamadı")):
             try:
@@ -217,15 +262,17 @@ class SortController:
             except Exception as exc:
                 problems.append(f"{label}: {exc}")
         if problems:
-            fault = ControllerFault(fault.code, f"{fault.message} — ayrıca {'; '.join(problems)}")
-        self.fault = fault
-        self.state = State.FAULT
+            with self._workers_lock:
+                self.fault = ControllerFault(self.fault.code, f"{self.fault.message} — ayrıca {'; '.join(problems)}")
 
-    def _call(self, action: Callable[[], object], timeout: float, what: str):
+    def _call(self, action: Callable[[], object], timeout: float, what: str, guarded: bool = False):
         """Sürücü komutunu ayrı iş parçacığında çalıştırır; süresi aşılırsa arıza verir.
 
         Python iş parçacığı zorla durdurulamaz; bu yüzden zaman aşımından sonra
         _safe_stop motoru durdurma komutu gönderir ve sürücünün bunu dinlemesi gerekir.
+
+        guarded: ayırma adımları için. Kayıtlı bir arıza varsa komut başlatılmaz;
+        komut sürerken arıza kaydedildiyse sonucu kullanılmaz.
         """
         outcome: dict = {}
 
@@ -247,11 +294,17 @@ class SortController:
                 previous = self._workers.get(what)
                 if previous is not None and previous.is_alive():
                     raise ControllerFault("busy", f"Önceki sürücü çağrısı sürüyor: {what}")
+                if guarded and self.fault is not None:
+                    raise self.fault
                 self._workers[what] = worker
                 worker.start()
             worker.join(timeout)
             if worker.is_alive():
                 raise ControllerFault("timeout", f"{what} {timeout:g} saniyede tamamlanmadı")
+            if guarded:
+                with self._workers_lock:
+                    if self.fault is not None:
+                        raise self.fault
             if "error" in outcome:
                 raise outcome["error"]
             return outcome.get("value")

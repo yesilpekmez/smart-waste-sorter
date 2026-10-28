@@ -19,7 +19,7 @@ from sqlalchemy.exc import IntegrityError
 from controller import ControllerFault, State
 
 from .control import controller, sync_bins
-from .models import Bin, Detection, Operation, db
+from .models import Detection, Operation, db
 
 
 class SortRefused(Exception):
@@ -39,10 +39,13 @@ def latest_detection() -> Optional[Detection]:
     return Detection.query.order_by(Detection.id.desc()).first()
 
 
-def rejection_reason(detection: Detection, bin_: Bin) -> Optional[str]:
+def rejection_reason(detection: Detection, fill: Optional[int]) -> Optional[str]:
+    """fill: hedef bölmenin anlık doluluğu; sensör okunamadıysa None."""
     if detection.confidence < current_app.config["MIN_CONFIDENCE"]:
         return "uncertain"
-    if bin_.fill >= current_app.config["FULL_THRESHOLD"]:
+    if fill is None:
+        return "sensor_error"  # doluluk bilinmeden bölmeye atık gönderilmez
+    if fill >= current_app.config["FULL_THRESHOLD"]:
         return "bin_full"
     return None
 
@@ -65,8 +68,7 @@ def sort(detection: Detection) -> Operation:
     if refused:
         raise refused
 
-    sync_bins()
-    reason = rejection_reason(detection, db.session.get(Bin, detection.label))
+    reason = rejection_reason(detection, sync_bins()[detection.label])
     op = Operation(
         detection_id=detection.id,
         target_bin=detection.label,

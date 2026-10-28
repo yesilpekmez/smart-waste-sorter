@@ -9,8 +9,8 @@ from sqlalchemy import func
 from controller import ControllerFault
 
 from . import sorting
-from .control import controller, simulator, sync_bins
-from .models import OPERATION_STATUSES, WASTE_CLASSES, Bin, Detection, Operation, db
+from .control import bin_payload, controller, simulator, sync_bins
+from .models import OPERATION_STATUSES, WASTE_CLASSES, Detection, Operation, db
 
 api = Blueprint("api", __name__, url_prefix="/api")
 
@@ -47,11 +47,11 @@ def classifier():
 
 def detection_payload(detection: Detection) -> dict:
     """Algılamayı, işlem durumu ve şu an ayrılıp ayrılamayacağıyla birlikte döndürür."""
-    sync_bins()
+    levels = sync_bins()
     refused = sorting.refusal(detection)
     blocked = None
     if detection.operation is None:
-        blocked = sorting.rejection_reason(detection, db.session.get(Bin, detection.label))
+        blocked = sorting.rejection_reason(detection, levels[detection.label])
     return {
         **detection.to_dict(),
         "operation": detection.operation.to_dict() if detection.operation else None,
@@ -73,12 +73,22 @@ def health():
     }
 
 
+def item_present():
+    """Atık sensörü okunamazsa None. Kontrol servisi bu durumda arızayı kendisi kaydeder;
+    durum sorgusu yine de yanıt verir ki panel arızayı gösterebilsin."""
+    try:
+        return controller().item_present()
+    except ControllerFault:
+        return None
+
+
 @api.get("/system")
 def system_status():
     running = sorting.running_operation()
+    present = item_present()  # okuma arızayı kaydedebilir; durum ondan sonra alınır
     return {
         **controller().status(),
-        "itemPresent": controller().item_present(),
+        "itemPresent": present,
         "runningOperationId": running.id if running else None,
     }
 
@@ -95,8 +105,8 @@ def system_reset():
 
 @api.get("/bins")
 def list_bins():
-    bins = {b.type: b for b in sync_bins()}
-    return jsonify([bins[t].to_dict() for t in WASTE_CLASSES])
+    levels = sync_bins()
+    return jsonify([bin_payload(t, levels) for t in WASTE_CLASSES])
 
 
 @api.post("/bins/<bin_type>/empty")
@@ -109,8 +119,7 @@ def empty_bin(bin_type: str):
         # Gerçek sistemde bölme elle boşaltılır; sensörler yeni seviyeyi okur
         return error("Bölmeyi fiziksel olarak boşaltın", 400)
     sim.empty_bin(bin_type)
-    sync_bins()
-    return db.session.get(Bin, bin_type).to_dict()
+    return bin_payload(bin_type, sync_bins())
 
 
 @api.post("/detect")
@@ -197,7 +206,7 @@ def sort():
         op = sorting.sort(detection)
     except sorting.SortRefused as refused:
         return error(refused.message, 409, refused.code)
-    return {"operation": op.to_dict(), "bin": db.session.get(Bin, detection.label).to_dict()}, 201
+    return {"operation": op.to_dict(), "bin": bin_payload(detection.label, sync_bins())}, 201
 
 
 @api.get("/operations")
@@ -252,20 +261,30 @@ def stats():
     }
 
 
-SIM_FAULTS = {"jam", "position", "home", "stall", "gate_error", "stop_error"}
+SIM_FAULTS = {"jam", "position", "home", "stall", "gate_error", "stop_error", "presence_error"} | {
+    f"fill_error_{t}" for t in WASTE_CLASSES
+}
 
 
-@api.route("/sim/faults", methods=["GET", "PUT"])
+@api.get("/sim/faults")
+def get_sim_faults():
+    """Simülasyonda etkin arızalar (yalnızca simülasyon modunda)."""
+    sim = simulator()
+    if sim is None:
+        return error("Yalnızca simülasyon modunda kullanılabilir", 404)
+    return {"faults": sorted(sim.world.faults)}
+
+
+@api.put("/sim/faults")
 @exclusive_command
-def sim_faults():
+def set_sim_faults():
     """Simülasyonda arıza denemek için (yalnızca simülasyon modunda)."""
     sim = simulator()
     if sim is None:
         return error("Yalnızca simülasyon modunda kullanılabilir", 404)
-    if request.method == "PUT":
-        body = request.get_json(silent=True)
-        faults = body.get("faults") if isinstance(body, dict) else None
-        if not isinstance(faults, list) or any(not isinstance(f, str) or f not in SIM_FAULTS for f in faults):
-            return error(f"faults şunlardan oluşan bir liste olmalı: {sorted(SIM_FAULTS)}", 400, "invalid_request")
-        sim.world.faults = set(faults)
+    body = request.get_json(silent=True)
+    faults = body.get("faults") if isinstance(body, dict) else None
+    if not isinstance(faults, list) or any(not isinstance(f, str) or f not in SIM_FAULTS for f in faults):
+        return error(f"faults şunlardan oluşan bir liste olmalı: {sorted(SIM_FAULTS)}", 400, "invalid_request")
+    sim.world.faults = set(faults)
     return {"faults": sorted(sim.world.faults)}

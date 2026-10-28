@@ -1,6 +1,6 @@
 export type WasteClass = 'plastic' | 'paper' | 'glass' | 'metal';
 
-export type BlockReason = 'uncertain' | 'bin_full';
+export type BlockReason = 'uncertain' | 'bin_full' | 'sensor_error';
 
 export type OperationStatus = 'running' | 'completed' | 'rejected' | 'aborted' | 'failed';
 
@@ -44,8 +44,9 @@ export interface Detection {
 
 export interface Bin {
   type: WasteClass;
-  fill: number;
-  updatedAt: string;
+  fill: number | null; // sensör okunamadıysa null
+  sensorOk: boolean;
+  updatedAt: string | null; // son başarılı okuma
 }
 
 export interface Health {
@@ -60,7 +61,7 @@ export interface Health {
 export interface SystemStatus {
   state: 'idle' | 'routing' | 'dropping' | 'verifying' | 'returning' | 'fault';
   fault: { code: string; message: string } | null;
-  itemPresent: boolean;
+  itemPresent: boolean | null; // sensör okunamadıysa null
   runningOperationId: number | null;
 }
 

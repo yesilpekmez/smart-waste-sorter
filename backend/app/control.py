@@ -39,13 +39,29 @@ def simulator():
     return hw if isinstance(hw, SimulatedHardware) else None
 
 
-def sync_bins() -> list:
-    """Doluluk sensörlerini okuyup veritabanındaki bölme kayıtlarını günceller."""
-    bins = []
-    for bin_type, fill in controller().fill_levels().items():
+def sync_bins() -> dict:
+    """Doluluk sensörlerini okur; okunabilenleri veritabanına yazar.
+
+    Bölme türü → yaklaşık doluluk yüzdesi döndürür. Sensörü okunamayan bölme
+    için değer None olur; veritabanında son bilinen değer kalır.
+    """
+    levels = controller().fill_levels()
+    for bin_type, fill in levels.items():
+        if fill is None:
+            continue
         bin_ = db.session.get(Bin, bin_type) or Bin(type=bin_type)
         bin_.fill = fill
         db.session.add(bin_)
-        bins.append(bin_)
     db.session.commit()
-    return bins
+    return levels
+
+
+def bin_payload(bin_type: str, levels: dict) -> dict:
+    """Bölmenin anlık okumasını, son başarılı okumanın zamanıyla birlikte döndürür."""
+    bin_ = db.session.get(Bin, bin_type)
+    return {
+        "type": bin_type,
+        "fill": levels.get(bin_type),
+        "sensorOk": levels.get(bin_type) is not None,
+        "updatedAt": bin_.to_dict()["updatedAt"] if bin_ else None,
+    }

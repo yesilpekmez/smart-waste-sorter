@@ -223,3 +223,48 @@ def test_command_lock_released_after_invalid_image(client):
 
 def test_sim_faults_rejects_unhashable_values(client):
     assert client.put('/api/sim/faults', json={'faults': [{}]}).status_code == 400
+
+
+def broken_sensor():
+    raise OSError("Ultrasonik sensör yanıt vermiyor")
+
+
+def test_unreadable_fill_sensor_blocks_only_that_bin(client, classifier, ctrl):
+    ctrl.hw.fill_sensors["metal"].distance_cm = broken_sensor
+
+    bins = {b["type"]: b for b in client.get("/api/bins").get_json()}
+    assert bins["metal"]["fill"] is None and bins["metal"]["sensorOk"] is False
+    assert bins["metal"]["updatedAt"] is not None  # son başarılı okumanın zamanı
+    assert bins["glass"]["sensorOk"] is True
+
+    system = client.get("/api/system").get_json()
+    assert system["state"] == "idle" and system["fault"] is None
+
+    classifier.next = Prediction("metal", 0.95)
+    d = detect(client)
+    assert d["blockedReason"] == "sensor_error"
+    op = sort(client, d["id"]).get_json()["operation"]
+    assert (op["status"], op["reason"]) == ("rejected", "sensor_error")
+
+    classifier.next = Prediction("glass", 0.95)
+    assert sort(client, detect(client)["id"]).get_json()["operation"]["status"] == "completed"
+
+
+def test_presence_sensor_failure_is_reported_not_hidden(client, ctrl):
+    ctrl.hw.presence.item_present = broken_sensor
+    res = client.get("/api/system")
+    assert res.status_code == 200  # panel arızayı gösterebilmeli
+    body = res.get_json()
+    assert body["itemPresent"] is None
+    assert body["state"] == "fault"
+    assert body["fault"]["code"] == "driver_error"
+
+
+def test_sim_faults_readable_during_command(app, client):
+    lock = app.extensions["command_lock"]
+    lock.acquire()
+    try:
+        assert client.get("/api/sim/faults").status_code == 200
+        assert client.put("/api/sim/faults", json={"faults": []}).status_code == 409
+    finally:
+        lock.release()

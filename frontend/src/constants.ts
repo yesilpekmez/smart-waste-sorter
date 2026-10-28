@@ -16,6 +16,7 @@ export const percent = (v: number) => `%${Math.round(v * 100)}`;
 export const REASON_TEXT: Record<string, string> = {
   uncertain: 'Belirsiz tahmin',
   bin_full: 'Bölme dolu',
+  sensor_error: 'Doluluk sensörü okunamadı',
   no_item: 'Platformda atık yok',
   jam: 'Sıkışma',
   position_error: 'Konum hatası',

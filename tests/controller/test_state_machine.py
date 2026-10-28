@@ -199,7 +199,7 @@ def test_reset_refused_until_timed_out_driver_really_finishes(hw):
     assert hw.platform.at_reference()
 
 
-@pytest.mark.parametrize('sensor', ['presence', 'position', 'reference', 'fill'])
+@pytest.mark.parametrize('sensor', ['presence', 'position', 'reference'])
 def test_sensor_timeouts_latch_fault_and_block_reset(hw, sensor):
     import threading
     from controller import Timeouts
@@ -219,17 +219,10 @@ def test_sensor_timeouts_latch_fault_and_block_reset(hw, sensor):
         elif sensor == 'position':
             hw.platform.position = blocked
             result = ctrl.sort('glass')
-        elif sensor == 'reference':
+        else:
             hw.platform.at_reference = blocked
             result = ctrl.sort('glass')
-        else:
-            hw.fill_sensors['plastic'].distance_cm = blocked
-            with pytest.raises(ControllerFault) as error:
-                ctrl.fill_levels()
-            assert error.value.code == 'timeout'
-            result = None
-        if result:
-            assert result.error_code == 'timeout'
+        assert result.error_code == 'timeout'
         assert ctrl.state == State.FAULT
         with pytest.raises(ControllerFault):
             ctrl.reset()
@@ -260,3 +253,96 @@ def test_parallel_sensor_reads_are_serialized_without_fault(hw):
         assert first.result() is True
         assert second.result() is True
     assert ctrl.state == State.IDLE
+
+
+def test_fault_from_other_thread_stops_running_sort(hw):
+    """Ayırma sürerken panelin sensör okuması hata verirse motor bir daha hareket etmemeli."""
+    import threading
+
+    ctrl = SortController(hw)
+    calls = []
+    original_home, original_stop, original_close = hw.platform.home, hw.platform.stop, hw.gate.close
+    original_present = hw.presence.item_present
+    hw.platform.home = lambda: (calls.append('home'), original_home())[1]
+    hw.platform.stop = lambda: (calls.append('stop'), original_stop())[1]
+    fail_next_read = threading.Event()
+
+    def present():
+        if fail_next_read.is_set():
+            fail_next_read.clear()
+            raise OSError('sensör okunamadı')
+        return original_present()
+
+    def close_and_poll_from_panel():
+        original_close()
+        if 'panel' in calls:
+            return
+        calls.append('panel')
+        # Kapak kapanırken panelin durum sorgusu tam bir kez hata alıyor
+        fail_next_read.set()
+        errors = []
+        panel = threading.Thread(target=lambda: errors.append(pytest.raises(ControllerFault, ctrl.item_present)))
+        panel.start()
+        panel.join(3)
+        assert errors
+
+    hw.presence.item_present = present
+    hw.gate.close = close_and_poll_from_panel
+    hw.place_item()
+
+    result = ctrl.sort('glass')
+
+    assert 'panel' in calls and 'stop' in calls
+    assert 'home' not in calls[calls.index('stop'):], 'durdurmadan sonra motor hareket etmemeli'
+    assert result.ok is False
+    assert result.fault is True
+    assert result.error_code == 'driver_error'  # ilk neden korunur
+    assert ctrl.state == State.FAULT
+
+    with pytest.raises(ControllerFault) as err:
+        ctrl.sort('glass')
+    assert err.value.code == 'faulted'
+
+
+def test_unreadable_fill_sensor_is_unknown_not_fault(hw):
+    import threading
+    from controller import Timeouts
+
+    release = threading.Event()
+    ctrl = SortController(hw, timeouts=Timeouts(sensor=0.02))
+    hw.fill_sensors['plastic'].distance_cm = lambda: release.wait(3)  # takılan sensör
+    hw.fill_sensors['metal'].distance_cm = lambda: (_ for _ in ()).throw(OSError('yanıt yok'))
+    try:
+        levels = ctrl.fill_levels()
+        assert levels['plastic'] is None
+        assert levels['metal'] is None
+        assert levels['glass'] is not None
+        assert ctrl.state == State.IDLE and ctrl.fault is None
+
+        # Takılı doluluk okuması sıfırlamayı ve ayırmayı engellemez
+        ctrl.reset()
+        hw.place_item()
+        assert ctrl.sort('glass').ok
+    finally:
+        release.set()
+
+
+def test_refused_reset_keeps_original_fault(hw):
+    import threading
+    from controller import Timeouts
+
+    release = threading.Event()
+    original = hw.platform.rotate_to
+    hw.platform.rotate_to = lambda angle: (release.wait(3), original(angle))
+    hw.place_item()
+    ctrl = SortController(hw, timeouts=Timeouts(move=0.02))
+    try:
+        assert ctrl.sort('glass').error_code == 'timeout'
+        with pytest.raises(ControllerFault) as err:
+            ctrl.reset()
+        assert err.value.code == 'busy'
+        assert ctrl.fault.code == 'timeout'
+    finally:
+        release.set()
+        for worker in list(ctrl._workers.values()):
+            worker.join(3)

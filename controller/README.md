@@ -20,7 +20,17 @@ Arızada kapak kapatılır, motor durdurulur ve `reset()` çağrılana kadar yen
 
 - `hardware.py`: Donanım arayüzleri (Platform, Gate, PresenceSensor, DistanceSensor), bölme açıları, mesafe → doluluk dönüşümü
 - `state_machine.py`: `SortController`
-- `simulated.py`: Donanımsız çalışan sürücüler; `world.faults` ile arıza denenebilir (`jam`, `position`, `home`)
+- `simulated.py`: Donanımsız çalışan sürücüler; `world.faults` ile arıza denenebilir
+  (`jam`, `position`, `home`, `stall`, `gate_error`, `stop_error`, `presence_error`, `fill_error_<bölme>`)
+
+## Arıza kuralları
+
+- Arıza ayırmanın dışında da oluşabilir (ör. panelin atık sensörü okuması). Arıza kaydedilir ve
+  çıkışlar durdurulur; ayırma her hareketten önce ve sonra arızayı denetler, yeni hareket başlatmaz.
+  Denetim ile hareketin başlatılması aynı kilit altındadır.
+- Bir arıza olayında ilk neden korunur; başarısız sıfırlama yeni nedeni kaydeder.
+- Doluluk sensörleri hareketi etkilemez: okunamayan bölmenin doluluğu `None` döner ve sistemi
+  arızaya sokmaz. Backend o bölmeye ayırmayı `sensor_error` ile reddeder.
 
 Raspberry Pi sürücüleri aynı arayüzleri uygulayacak; durum makinesi değişmeyecek.
 

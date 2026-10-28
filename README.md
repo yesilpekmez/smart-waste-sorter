@@ -60,7 +60,7 @@ sırasında kapanırsa açılışta `failed / interrupted` olarak kapatılır.
 | İşlem durumu | Anlamı |
 |---|---|
 | `completed` | Atık bölmeye bırakıldı |
-| `rejected` | Yazılım kuralı engelledi: `uncertain` (güven < eşik), `bin_full` |
+| `rejected` | Yazılım kuralı engelledi: `uncertain` (güven < eşik), `bin_full`, `sensor_error` (hedef bölmenin doluluğu okunamadı) |
 | `aborted` | Başlatılamadı, arıza değil: `no_item` |
 | `failed` | Donanım arızası: `jam`, `position_error`, `home_error`, `timeout`, `driver_error`, `interrupted` |
 
@@ -81,4 +81,4 @@ backend/.venv/bin/python -m pytest tests
 | `GET /api/operations` | İşlem geçmişi (`label`, `status`, `limit`, `offset`) |
 | `GET /api/detections/latest` | Son algılama; işlem sonucu ve şu an ayrılabilir olup olmadığıyla |
 | `GET /api/stats` | Başarı oranı, ortalama güven ve süre, sınıf bazında sayılar |
-| `GET/PUT /api/sim/faults` | Yalnızca simülasyonda: arıza dene (`jam`, `position`, `home`, `stall`, `gate_error`, `stop_error`) |
+| `GET/PUT /api/sim/faults` | Yalnızca simülasyonda: arıza dene (`jam`, `position`, `home`, `stall`, `gate_error`, `stop_error`, `presence_error`, `fill_error_<bölme>`) |

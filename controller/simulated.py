@@ -10,6 +10,8 @@ Tüm sürücüler ortak bir SimulatedWorld nesnesini paylaşır: platformun aç�
     stall       motor takılır; durdurma komutu gelene kadar hareket bitmez
     gate_error  servo sürücüsü OSError verir
     stop_error  motoru durdurma komutu da OSError verir
+    presence_error       atık sensörü OSError verir
+    fill_error_<bölme>   o bölmenin doluluk sensörü OSError verir (ör. fill_error_metal)
 """
 from __future__ import annotations
 
@@ -100,6 +102,8 @@ class SimulatedPresence:
         self.world = world
 
     def item_present(self) -> bool:
+        if "presence_error" in self.world.faults:
+            raise OSError("Kızılötesi sensör okunamadı")
         return self.world.item_on_platform
 
 
@@ -109,6 +113,8 @@ class SimulatedDistance:
         self.bin_type = bin_type
 
     def distance_cm(self) -> float:
+        if f"fill_error_{self.bin_type}" in self.world.faults:
+            raise OSError("Ultrasonik sensör yanıt vermiyor")
         level = self.world.levels[self.bin_type]
         return max(FULL_DISTANCE_CM - 1, EMPTY_DISTANCE_CM - level)
 

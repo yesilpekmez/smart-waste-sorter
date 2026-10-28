@@ -7,6 +7,7 @@ export type PanelStatus =
   | 'ready'
   | 'uncertain'
   | 'bin_full'
+  | 'sensor_error'
   | 'stale'
   | 'sorting'
   | 'done'
@@ -24,6 +25,11 @@ const STATUS: Record<PanelStatus, { text: string; hint?: string; warn?: boolean 
     warn: true,
   },
   bin_full: { text: 'Bölme dolu', hint: 'Bölmeyi boşaltınca atık ayrılabilir.', warn: true },
+  sensor_error: {
+    text: 'Doluluk bilinmiyor',
+    hint: 'Hedef bölmenin doluluk sensörü okunamıyor; doluluk bilinmeden atık gönderilmez.',
+    warn: true,
+  },
   stale: { text: 'Tahmin geçersiz', hint: 'Bu karar daha yeni bir algılamayla geçersiz kaldı.', warn: true },
   sorting: { text: 'Ayrılıyor…' },
   done: { text: 'Ayrıldı', hint: 'Sıradaki atığı platforma koyup analiz et.' },
@@ -49,7 +55,7 @@ interface Props {
 export function ResultCard({ detection, status, systemState, minConfidence, onSort, disabled }: Props) {
   const name = detection ? CLASSES[detection.label].name : '—';
   const confidence = detection?.confidence ?? 0;
-  const blocked = status === 'uncertain' || status === 'bin_full';
+  const blocked = status === 'uncertain' || status === 'bin_full' || status === 'sensor_error';
   const canSort = status === 'ready' || blocked;
   const info = STATUS[status];
 

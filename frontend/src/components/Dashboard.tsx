@@ -11,9 +11,10 @@ const POLL_MS = 3000;
 
 type Connection = 'connecting' | 'online' | 'offline';
 
+// Sorgulardan biri başarısız olursa o parçanın son bilinen değeri korunur
 interface Snapshot {
-  system: SystemStatus;
-  bins: Record<WasteClass, number>;
+  system: SystemStatus | null;
+  bins: Record<WasteClass, number | null> | null; // null doluluk: sensör okunamadı
   detection: Detection | null;
   lastOp: Operation | null;
   at: Date;
@@ -23,8 +24,8 @@ interface Snapshot {
 function panelStatus(snapshot: Snapshot | null, sorting: boolean): PanelStatus {
   if (!snapshot) return 'idle';
   const { system, detection } = snapshot;
-  if (system.state === 'fault') return 'fault';
-  if (sorting || system.runningOperationId !== null) return 'sorting';
+  if (system?.state === 'fault') return 'fault';
+  if (sorting || (system && system.runningOperationId !== null)) return 'sorting';
   if (!detection) return 'idle';
 
   const op = detection.operation;
@@ -45,46 +46,50 @@ export function Dashboard() {
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [sorting, setSorting] = useState(false);
   const [busy, setBusy] = useState(false); // analiz ya da sıfırlama sürüyor
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null); // kullanıcının son işleminin hatası
+  const [pollError, setPollError] = useState<string | null>(null); // düzenli sorgunun hatası
   const needsHealth = useRef(true);
   const refreshGeneration = useRef(0);
 
   const refresh = useCallback(async () => {
     const generation = ++refreshGeneration.current;
-    try {
-      if (needsHealth.current) {
-        const nextHealth = await api.health();
-        if (generation !== refreshGeneration.current) return;
-        setHealth(nextHealth);
-        needsHealth.current = false;
-      }
-      const [system, binList, detection, ops] = await Promise.all([
-        api.system(),
-        api.bins(),
-        api.latestDetection(),
-        api.operations({ limit: 1 }),
-      ]);
-      if (generation !== refreshGeneration.current) return;
-      setSnapshot({
-        system,
-        bins: Object.fromEntries(binList.map((b) => [b.type, b.fill])) as Record<WasteClass, number>,
-        detection,
-        lastOp: ops.items[0] ?? null,
-        at: new Date(),
-      });
-      setConnection('online');
-    } catch (e) {
-      if (generation !== refreshGeneration.current) return;
-      if (!(e instanceof NetworkError)) {
-        setConnection("offline");
-        setError(e instanceof ApiError ? e.message : "Durum okunamadı");
-        needsHealth.current = true;
-        return;
-      }
+    const results = await Promise.allSettled([
+      needsHealth.current ? api.health() : Promise.resolve(null),
+      api.system(),
+      api.bins(),
+      api.latestDetection(),
+      api.operations({ limit: 1 }),
+    ] as const);
+    if (generation !== refreshGeneration.current) return;
+
+    const failures = results.flatMap((r) => (r.status === 'rejected' ? [r.reason] : []));
+    if (failures.some((e) => e instanceof NetworkError)) {
       // Sunucuya ulaşılamıyor; yeniden bağlanınca ayarlar tekrar alınır
       setConnection('offline');
       needsHealth.current = true;
+      return;
     }
+
+    // Sunucu yanıt veriyor; başarısız sorgular (ör. donanım hatası) bağlantı kopması sayılmaz
+    setConnection('online');
+    const messages = failures.map((e) => (e instanceof ApiError ? e.message : 'Durum okunamadı'));
+    setPollError(messages.length ? [...new Set(messages)].join(' · ') : null);
+
+    const [health, system, bins, detection, ops] = results;
+    if (health.status === 'fulfilled' && health.value) {
+      setHealth(health.value);
+      needsHealth.current = false;
+    }
+    setSnapshot((prev) => ({
+      system: system.status === 'fulfilled' ? system.value : (prev?.system ?? null),
+      bins:
+        bins.status === 'fulfilled'
+          ? (Object.fromEntries(bins.value.map((b) => [b.type, b.fill])) as Record<WasteClass, number | null>)
+          : (prev?.bins ?? null),
+      detection: detection.status === 'fulfilled' ? detection.value : (prev?.detection ?? null),
+      lastOp: ops.status === 'fulfilled' ? (ops.value.items[0] ?? null) : (prev?.lastOp ?? null),
+      at: new Date(),
+    }));
   }, []);
 
   useEffect(() => {
@@ -183,6 +188,7 @@ export function Dashboard() {
         </div>
       )}
       {error && <div className="alert">{error}</div>}
+      {pollError && connection === 'online' && <div className="alert">Durum okunurken hata: {pollError}</div>}
 
       <div className="grid-main">
         <Viewer
@@ -197,7 +203,7 @@ export function Dashboard() {
           systemState={system?.state}
           minConfidence={health?.minConfidence}
           onSort={handleSort}
-          disabled={busy || sorting || connection !== "online"}
+          disabled={busy || sorting || connection !== 'online'}
         />
       </div>
 
@@ -213,7 +219,8 @@ export function Dashboard() {
           <BinCard
             key={type}
             type={type}
-            fill={snapshot ? snapshot.bins[type] : null}
+            fill={snapshot?.bins ? snapshot.bins[type] : null}
+            sensorError={snapshot?.bins ? snapshot.bins[type] === null : false}
             fullThreshold={health?.fullThreshold}
             active={status === 'sorting' && detection?.label === type}
             onEmpty={simulated ? () => handleEmpty(type) : undefined}
