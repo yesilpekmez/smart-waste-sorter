@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from functools import wraps
+
 from flask import Blueprint, current_app, jsonify, request, send_file
 from PIL import Image, UnidentifiedImageError
 from sqlalchemy import func
@@ -18,6 +20,25 @@ def error(message: str, status: int, code: str | None = None):
     if code:
         body["code"] = code
     return jsonify(body), status
+
+
+def exclusive_command(fn):
+    """Analiz, ayırma ve sıfırlama aynı atık döngüsünü paylaşır."""
+    @wraps(fn)
+    def wrapped(*args, **kwargs):
+        lock = current_app.extensions["command_lock"]
+        if not lock.acquire(blocking=False):
+            return error("Başka bir işlem sürüyor", 409, "busy")
+        try:
+            return fn(*args, **kwargs)
+        finally:
+            lock.release()
+    return wrapped
+
+
+@api.errorhandler(ControllerFault)
+def hardware_error(fault):
+    return error(fault.message, 503, fault.code)
 
 
 def classifier():
@@ -63,6 +84,7 @@ def system_status():
 
 
 @api.post("/system/reset")
+@exclusive_command
 def system_reset():
     try:
         controller().reset()
@@ -78,6 +100,7 @@ def list_bins():
 
 
 @api.post("/bins/<bin_type>/empty")
+@exclusive_command
 def empty_bin(bin_type: str):
     if bin_type not in WASTE_CLASSES:
         return error("Bölme bulunamadı", 404)
@@ -91,6 +114,7 @@ def empty_bin(bin_type: str):
 
 
 @api.post("/detect")
+@exclusive_command
 def detect():
     """Kameradan alınan kareyi ya da yüklenen fotoğrafı sınıflandırır.
 
@@ -157,6 +181,7 @@ def detection_image(detection_id: int):
 
 
 @api.post("/sort")
+@exclusive_command
 def sort():
     body = request.get_json(silent=True)
     detection_id = body.get("detectionId") if isinstance(body, dict) else None
@@ -231,6 +256,7 @@ SIM_FAULTS = {"jam", "position", "home", "stall", "gate_error", "stop_error"}
 
 
 @api.route("/sim/faults", methods=["GET", "PUT"])
+@exclusive_command
 def sim_faults():
     """Simülasyonda arıza denemek için (yalnızca simülasyon modunda)."""
     sim = simulator()
@@ -239,7 +265,7 @@ def sim_faults():
     if request.method == "PUT":
         body = request.get_json(silent=True)
         faults = body.get("faults") if isinstance(body, dict) else None
-        if not isinstance(faults, list) or not set(faults) <= SIM_FAULTS:
+        if not isinstance(faults, list) or any(not isinstance(f, str) or f not in SIM_FAULTS for f in faults):
             return error(f"faults şunlardan oluşan bir liste olmalı: {sorted(SIM_FAULTS)}", 400, "invalid_request")
         sim.world.faults = set(faults)
     return {"faults": sorted(sim.world.faults)}

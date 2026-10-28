@@ -23,3 +23,9 @@ Arızada kapak kapatılır, motor durdurulur ve `reset()` çağrılana kadar yen
 - `simulated.py`: Donanımsız çalışan sürücüler; `world.faults` ile arıza denenebilir (`jam`, `position`, `home`)
 
 Raspberry Pi sürücüleri aynı arayüzleri uygulayacak; durum makinesi değişmeyecek.
+
+Sürücü ve sensör çağrıları süreyle sınırlıdır. Zaman aşımı Python iş parçacığını
+sonlandırmaz: devam eden çağrı izlenir ve bitmeden sıfırlama kabul edilmez.
+Gerçek motor sürücüsünün `stop()` komutu devam eden hareketi iptal etmeli;
+sensör sürücüleri de kendi I/O zaman aşımını uygulamalıdır. Yazılımın süre sınırı
+fiziksel acil durdurmanın yerini tutmaz.

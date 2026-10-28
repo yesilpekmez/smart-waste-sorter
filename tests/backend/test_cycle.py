@@ -182,3 +182,44 @@ def test_sim_faults_endpoint(client, world):
     assert world.faults == {"jam"}
     assert client.put("/api/sim/faults", json={"faults": ["yangın"]}).status_code == 400
     assert client.put("/api/sim/faults", json={"faults": []}).get_json() == {"faults": []}
+
+
+def test_analysis_owns_cycle_until_prediction_is_saved(app, client, classifier):
+    old = detect(client)
+    entered, release = threading.Event(), threading.Event()
+    result = []
+
+    def slow_predict(image):
+        entered.set()
+        assert release.wait(3)
+        return Prediction("glass", 0.95)
+
+    classifier.predict = slow_predict
+
+    def analyze():
+        with app.test_client() as other:
+            result.append(other.post("/api/detect").status_code)
+
+    worker = threading.Thread(target=analyze)
+    worker.start()
+    try:
+        assert entered.wait(3)
+        assert sort(client, old["id"]).get_json()["code"] == "busy"
+        assert client.post("/api/system/reset").status_code == 409
+        assert client.post("/api/detect").status_code == 409
+    finally:
+        release.set()
+        worker.join(3)
+    assert result == [201]
+    assert sort(client, old["id"]).get_json()["code"] == "stale"
+    assert sort(client, detect_latest(client)["id"]).status_code == 201
+
+
+def test_command_lock_released_after_invalid_image(client):
+    import io
+    assert client.post('/api/detect', data={'image': (io.BytesIO(b'bad'), 'bad.jpg')}).status_code == 400
+    assert client.post('/api/detect').status_code == 201
+
+
+def test_sim_faults_rejects_unhashable_values(client):
+    assert client.put('/api/sim/faults', json={'faults': [{}]}).status_code == 400

@@ -55,7 +55,9 @@ class SimulatedPlatform:
             self._stopped.wait(30)  # durdurma komutuna kadar takılı kalır
             return
         delta = abs(angle - self.world.angle)
-        self.world.wait(min(delta, 360 - delta) / DEGREES_PER_SECOND)
+        duration = min(delta, 360 - delta) / DEGREES_PER_SECOND * max(0, self.world.time_scale)
+        if self._stopped.wait(duration):
+            return
         # Konum hatası: motor adım kaçırır
         self.world.angle = angle + (15 if "position" in self.world.faults else 0)
 

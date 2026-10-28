@@ -166,3 +166,97 @@ def test_initialize_starts_in_fault_when_homing_fails(hw):
     ctrl = fast_controller(hw)
     ctrl.initialize()
     assert ctrl.state == State.FAULT
+
+
+def test_reset_refused_until_timed_out_driver_really_finishes(hw):
+    import threading
+    from controller import Timeouts
+
+    release = threading.Event()
+    original = hw.platform.rotate_to
+
+    def delayed(angle):
+        release.wait(3)
+        original(angle)
+
+    hw.platform.rotate_to = delayed
+    hw.place_item()
+    ctrl = SortController(hw, timeouts=Timeouts(move=0.02))
+    try:
+        assert ctrl.sort('glass').error_code == 'timeout'
+        hw.platform.rotate_to = original
+        with pytest.raises(ControllerFault):
+            ctrl.reset()
+        assert ctrl.state == State.FAULT
+        with pytest.raises(ControllerFault):
+            ctrl.sort('paper')
+    finally:
+        release.set()
+        for worker in list(ctrl._workers.values()):
+            worker.join(3)
+    ctrl.reset()
+    assert ctrl.state == State.IDLE
+    assert hw.platform.at_reference()
+
+
+@pytest.mark.parametrize('sensor', ['presence', 'position', 'reference', 'fill'])
+def test_sensor_timeouts_latch_fault_and_block_reset(hw, sensor):
+    import threading
+    from controller import Timeouts
+
+    release = threading.Event()
+
+    def blocked():
+        release.wait(3)
+        return 0
+
+    ctrl = SortController(hw, timeouts=Timeouts(sensor=0.02))
+    hw.place_item()
+    try:
+        if sensor == 'presence':
+            hw.presence.item_present = blocked
+            result = ctrl.sort('glass')
+        elif sensor == 'position':
+            hw.platform.position = blocked
+            result = ctrl.sort('glass')
+        elif sensor == 'reference':
+            hw.platform.at_reference = blocked
+            result = ctrl.sort('glass')
+        else:
+            hw.fill_sensors['plastic'].distance_cm = blocked
+            with pytest.raises(ControllerFault) as error:
+                ctrl.fill_levels()
+            assert error.value.code == 'timeout'
+            result = None
+        if result:
+            assert result.error_code == 'timeout'
+        assert ctrl.state == State.FAULT
+        with pytest.raises(ControllerFault):
+            ctrl.reset()
+    finally:
+        release.set()
+        for worker in list(ctrl._workers.values()):
+            worker.join(3)
+
+
+def test_parallel_sensor_reads_are_serialized_without_fault(hw):
+    import threading
+    import time
+    from concurrent.futures import ThreadPoolExecutor
+
+    ctrl = fast_controller(hw)
+    entered = threading.Event()
+
+    def read():
+        entered.set()
+        time.sleep(0.02)
+        return True
+
+    hw.presence.item_present = read
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(ctrl.item_present)
+        assert entered.wait(1)
+        second = pool.submit(ctrl.item_present)
+        assert first.result() is True
+        assert second.result() is True
+    assert ctrl.state == State.IDLE

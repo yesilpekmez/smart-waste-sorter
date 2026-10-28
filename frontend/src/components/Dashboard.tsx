@@ -47,11 +47,15 @@ export function Dashboard() {
   const [busy, setBusy] = useState(false); // analiz ya da sıfırlama sürüyor
   const [error, setError] = useState<string | null>(null);
   const needsHealth = useRef(true);
+  const refreshGeneration = useRef(0);
 
   const refresh = useCallback(async () => {
+    const generation = ++refreshGeneration.current;
     try {
       if (needsHealth.current) {
-        setHealth(await api.health());
+        const nextHealth = await api.health();
+        if (generation !== refreshGeneration.current) return;
+        setHealth(nextHealth);
         needsHealth.current = false;
       }
       const [system, binList, detection, ops] = await Promise.all([
@@ -60,6 +64,7 @@ export function Dashboard() {
         api.latestDetection(),
         api.operations({ limit: 1 }),
       ]);
+      if (generation !== refreshGeneration.current) return;
       setSnapshot({
         system,
         bins: Object.fromEntries(binList.map((b) => [b.type, b.fill])) as Record<WasteClass, number>,
@@ -69,7 +74,13 @@ export function Dashboard() {
       });
       setConnection('online');
     } catch (e) {
-      if (!(e instanceof NetworkError)) throw e;
+      if (generation !== refreshGeneration.current) return;
+      if (!(e instanceof NetworkError)) {
+        setConnection("offline");
+        setError(e instanceof ApiError ? e.message : "Durum okunamadı");
+        needsHealth.current = true;
+        return;
+      }
       // Sunucuya ulaşılamıyor; yeniden bağlanınca ayarlar tekrar alınır
       setConnection('offline');
       needsHealth.current = true;
@@ -86,12 +97,14 @@ export function Dashboard() {
     tick();
     return () => {
       cancelled = true;
+      refreshGeneration.current++;
       window.clearTimeout(timer);
     };
   }, [refresh]);
 
   const run = async (fn: () => Promise<unknown>) => {
     setError(null);
+    refreshGeneration.current++;
     try {
       await fn();
     } catch (e) {
@@ -184,6 +197,7 @@ export function Dashboard() {
           systemState={system?.state}
           minConfidence={health?.minConfidence}
           onSort={handleSort}
+          disabled={busy || sorting || connection !== "online"}
         />
       </div>
 

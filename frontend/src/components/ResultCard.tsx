@@ -43,9 +43,10 @@ interface Props {
   systemState?: SystemStatus['state'];
   minConfidence?: number;
   onSort: () => void;
+  disabled?: boolean;
 }
 
-export function ResultCard({ detection, status, systemState, minConfidence, onSort }: Props) {
+export function ResultCard({ detection, status, systemState, minConfidence, onSort, disabled }: Props) {
   const name = detection ? CLASSES[detection.label].name : '—';
   const confidence = detection?.confidence ?? 0;
   const blocked = status === 'uncertain' || status === 'bin_full';
@@ -83,7 +84,7 @@ export function ResultCard({ detection, status, systemState, minConfidence, onSo
 
       {info.hint && <p className="muted result__hint">{info.hint}</p>}
 
-      <button className="btn-primary" onClick={onSort} disabled={!canSort}>
+      <button className="btn-primary" onClick={onSort} disabled={disabled || !canSort}>
         {blocked ? 'Reddet ve kaydet' : 'Ayırmayı başlat'} <ArrowRight size={18} />
       </button>
     </section>

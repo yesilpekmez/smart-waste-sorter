@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import threading
 
 from flask import Flask
 
@@ -20,6 +21,7 @@ def create_app(overrides: dict | None = None) -> Flask:
 
     os.makedirs(app.instance_path, exist_ok=True)
     db.init_app(app)
+    app.extensions["command_lock"] = threading.Lock()
     app.extensions["classifier"] = load_classifier(app.config["MODEL_PATH"])
     app.extensions["controller"] = create_controller(app)
     app.register_blueprint(api)

@@ -33,6 +33,7 @@ class Timeouts:
     home: float = 8.0  # referans sensörüne dönüş
     gate: float = 2.0  # servonun açılması ya da kapanması
     drop: float = 2.0  # atığın platformdan ayrılması
+    sensor: float = 1.0  # sensör okuma süresi
     stop: float = 1.0  # güvenli durdurma komutları
 
 
@@ -80,14 +81,25 @@ class SortController:
         self.state = State.IDLE
         self.fault: Optional[ControllerFault] = None
         self._lock = threading.Lock()
+        self._workers_lock = threading.Lock()
+        self._workers: dict[str, threading.Thread] = {}
+        self._call_locks: dict[str, threading.Lock] = {}
 
     # Durum sorguları
 
     def fill_levels(self) -> dict:
-        return {t: fill_percent(s.distance_cm()) for t, s in self.hw.fill_sensors.items()}
+        return {t: fill_percent(self._read(s.distance_cm, f"Doluluk: {t}")) for t, s in self.hw.fill_sensors.items()}
 
     def item_present(self) -> bool:
-        return self.hw.presence.item_present()
+        return self._read(self.hw.presence.item_present, "Atık sensörü")
+
+    def _read(self, action, label):
+        try:
+            return self._call(action, self.timeouts.sensor, label)
+        except Exception as exc:
+            fault = self._as_fault(exc)
+            self._safe_stop(fault)
+            raise fault
 
     def status(self) -> dict:
         return {
@@ -124,9 +136,13 @@ class SortController:
         if not self._lock.acquire(blocking=False):
             raise ControllerFault("busy", "Başka bir işlem sürüyor")
         try:
+            with self._workers_lock:
+                pending = any(worker.is_alive() for worker in self._workers.values())
+            if pending:
+                raise ControllerFault("busy", "Önceki sürücü komutu henüz durmadı; sıfırlama engellendi")
             self._call(self.hw.gate.close, self.timeouts.gate, "Kapağın kapanması")
             self._call(self.hw.platform.home, self.timeouts.home, "Referansa dönüş")
-            if not self.hw.platform.at_reference():
+            if not self._call(self.hw.platform.at_reference, self.timeouts.sensor, "Referans sensörü"):
                 raise ControllerFault("home_error", "Platform referans konumuna dönemedi")
         except Exception as exc:
             fault = self._as_fault(exc)
@@ -152,18 +168,18 @@ class SortController:
             return SortResult(target_bin=target_bin, trace=trace, duration_s=round(self.clock() - start, 3), **kwargs)
 
         try:
-            if not self.hw.presence.item_present():
+            if not self._call(self.hw.presence.item_present, self.timeouts.sensor, "Atık sensörü"):
                 return result(ok=False, error_code="no_item", error="Platformda atık yok")
 
             enter(State.ROUTING)
             angle = BIN_ANGLES[target_bin]
             self._call(lambda: self.hw.platform.rotate_to(angle), self.timeouts.move, "Platformun dönmesi")
-            if abs(self.hw.platform.position() - angle) > POSITION_TOLERANCE_DEG:
+            if abs(self._call(self.hw.platform.position, self.timeouts.sensor, "Konum sensörü") - angle) > POSITION_TOLERANCE_DEG:
                 raise ControllerFault("position_error", "Platform hedef açıya ulaşamadı")
 
             enter(State.DROPPING)
             self._call(self.hw.gate.open, self.timeouts.gate, "Kapağın açılması")
-            dropped = self._wait_until(lambda: not self.hw.presence.item_present(), self.timeouts.drop)
+            dropped = self._wait_until(lambda: not self._call(self.hw.presence.item_present, self.timeouts.sensor, "Atık sensörü"), self.timeouts.drop)
             self._call(self.hw.gate.close, self.timeouts.gate, "Kapağın kapanması")
 
             enter(State.VERIFYING)
@@ -172,7 +188,7 @@ class SortController:
 
             enter(State.RETURNING)
             self._call(self.hw.platform.home, self.timeouts.home, "Referansa dönüş")
-            if not self.hw.platform.at_reference():
+            if not self._call(self.hw.platform.at_reference, self.timeouts.sensor, "Referans sensörü"):
                 raise ControllerFault("home_error", "Platform referans konumuna dönemedi")
 
             enter(State.IDLE)
@@ -192,6 +208,8 @@ class SortController:
 
     def _safe_stop(self, fault: ControllerFault) -> None:
         """Motoru durdurur ve kapağı kapatır; bunlar da başarısız olsa arıza durumunda kalır."""
+        self.fault = fault
+        self.state = State.FAULT
         problems = []
         for action, label in ((self.hw.platform.stop, "motor durdurulamadı"), (self.hw.gate.close, "kapak kapatılamadı")):
             try:
@@ -218,13 +236,27 @@ class SortController:
                 outcome["error"] = exc
 
         worker = threading.Thread(target=target, daemon=True)
-        worker.start()
-        worker.join(timeout)
-        if worker.is_alive():
-            raise ControllerFault("timeout", f"{what} {timeout:g} saniyede tamamlanmadı")
-        if "error" in outcome:
-            raise outcome["error"]
-        return outcome.get("value")
+        with self._workers_lock:
+            call_lock = self._call_locks.setdefault(what, threading.Lock())
+        # Aynı sensörü panel ve kontrol akışı birlikte okuyabilir. Normal okumalar
+        # sıraya girer; zaman aşımından kalan çağrı varken yeni sürücü başlatılmaz.
+        if not call_lock.acquire(timeout=timeout):
+            raise ControllerFault("timeout", f"Sürücü çağrısı bekleniyor: {what}")
+        try:
+            with self._workers_lock:
+                previous = self._workers.get(what)
+                if previous is not None and previous.is_alive():
+                    raise ControllerFault("busy", f"Önceki sürücü çağrısı sürüyor: {what}")
+                self._workers[what] = worker
+                worker.start()
+            worker.join(timeout)
+            if worker.is_alive():
+                raise ControllerFault("timeout", f"{what} {timeout:g} saniyede tamamlanmadı")
+            if "error" in outcome:
+                raise outcome["error"]
+            return outcome.get("value")
+        finally:
+            call_lock.release()
 
     def _wait_until(self, condition: Callable[[], bool], timeout: float) -> bool:
         deadline = self.clock() + timeout
